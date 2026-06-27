@@ -32,7 +32,7 @@ CMake variable, every Linux-only block is `#ifdef __linux__`-guarded.
 | PipeWire             | `PW_KEY_NODE_LATENCY = 8.192 ms` (default ~20–40 ms)                                     | 1–2 fewer frames of compositor-side buffering |
 | Upstream bugs        | Add missing `<array>` and `<span>` includes in `config.h` and `misc.cpp`                | Sunshine won't compile on clean GCC 13+/CachyOS toolchains without these |
 
-## Files in `cachyos-fastpath.patch` (7 files, ~+380 / -2 lines)
+## Files in `cachyos-fastpath.patch` (7 files, ~+414 / -11 lines)
 
 ```
 cmake/compile_definitions/common.cmake | CachyOS native flags + SolarFlare branding macro
@@ -49,7 +49,9 @@ upstream base commit `1fce18d9`, i.e. it includes the original
 cachyos-fastpath commit (`bbcd69b2`) **plus** the round of work that
 wired the 5 fork tunables (`busy_poll_us`, `rate_cap_pct`,
 `enet_4mib_buffer`, `pipewire_latency_ms`, `cpu_pinning`) through the
-standard Sunshine config plumbing.
+standard Sunshine config plumbing **plus** the two cherry-picked
+upstream commits that touched the same files
+(`07317293 fix(input)`, `4e6e137796 feat(linux/pipewire)`).
 
 It can be regenerated at any time with:
 
@@ -66,7 +68,8 @@ git diff 1fce18d9..HEAD -- \
 ```
 
 To regenerate the **historical** 7-file patch (just the original
-`bbcd69b2` commit, no fork config plumbing, ~+280 / -2 lines), use:
+`bbcd69b2` commit, no fork config plumbing, no cherry-picks, ~+280 / -2
+lines), use:
 
 ```bash
 git diff 1fce18d9..bbcd69b2 -- \
@@ -82,11 +85,22 @@ git diff 1fce18d9..bbcd69b2 -- \
 
 (`1fce18d9` is the upstream LizardByte/Sunshine commit this fork was
 originally forked from. To regenerate against a newer upstream, swap
-the left-hand-side of the diff for that newer commit. The patch has
-been verified to apply cleanly to `lizardbyte-upstream/master` HEAD
-as of June 2026; some 3-way merge conflicts in `pipewire.cpp` and
-`stream.cpp` are expected because upstream has added its own commits
-to those files since the fork base.)
+the left-hand-side of the diff for that newer commit.)
+
+### Where the patch applies cleanly
+
+| Apply target                                  | Result                                                         |
+|-----------------------------------------------|----------------------------------------------------------------|
+| LizardByte/Sunshine @ `1fce18d9` (fork base) | Applies with 0 conflicts                                        |
+| LizardByte/Sunshine @ current `master` HEAD   | Applies via 3-way merge; 3 conflict files (config.h, pipewire.cpp, stream.cpp) because upstream has added doxygen comments and other refactors since the fork base. Resolve manually with conflict markers. |
+
+If you're maintaining your own downstream and want the patch to apply
+cleanly to current upstream HEAD without conflicts, the cleanest
+option is to cherry-pick `a991a962 docs(doxygen): enforce warn if
+undocumented` first so the fork and upstream agree on those files.
+That commit touches every C++ file in the repo so the cherry-pick is
+non-trivial; we left it out of the fork because most of its surface
+change is comment-only and wouldn't affect runtime behaviour.
 
 ## How to apply the patch on top of an upstream clone
 
