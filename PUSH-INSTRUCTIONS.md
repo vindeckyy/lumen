@@ -32,24 +32,29 @@ CMake variable, every Linux-only block is `#ifdef __linux__`-guarded.
 | PipeWire             | `PW_KEY_NODE_LATENCY = 8.192 ms` (default ~20–40 ms)                                     | 1–2 fewer frames of compositor-side buffering |
 | Upstream bugs        | Add missing `<array>` and `<span>` includes in `config.h` and `misc.cpp`                | Sunshine won't compile on clean GCC 13+/CachyOS toolchains without these |
 
-## Files in the original patch (7 files, +280 / -2 lines)
+## Files in `cachyos-fastpath.patch` (7 files, ~+380 / -2 lines)
 
 ```
-cmake/compile_definitions/common.cmake |  68 ++++++++ (CachyOS native flags)
-cmake/targets/common.cmake             |   6 ++   (LTO at link time)
-src/config.h                           |   1 +    (missing <array> include)
-src/network.cpp                        |  39 ++   (UDP buffer + busy poll)
-src/platform/linux/misc.cpp            |  44 ++   (SCHED_RR + affinity + <span>)
-src/platform/linux/pipewire.cpp        |  16 +    (PipeWire node latency)
-src/stream.cpp                         | 108 ++   (link-speed autodetect)
+cmake/compile_definitions/common.cmake | CachyOS native flags + SolarFlare branding macro
+cmake/targets/common.cmake             | LTO at link time
+src/config.h                           | <array> include + solarflare_t struct + extern decl
+src/network.cpp                        | UDP buffer + busy poll + config::solarflare gates
+src/platform/linux/misc.cpp            | SCHED_RR + affinity + <span> + config::solarflare.cpu_pinning
+src/platform/linux/pipewire.cpp        | PipeWire node latency, configurable from config::solarflare
+src/stream.cpp                         | link-speed autodetect + config::solarflare.rate_cap_pct
 ```
 
-These are exactly the seven files touched by commit `bbcd69b2`
-("CachyOS/Linux local-LAN latency fast path") on the SolarFlare fork.
-The patch can be regenerated at any time with:
+The committed patch represents the **cumulative** fork diff against the
+upstream base commit `1fce18d9`, i.e. it includes the original
+cachyos-fastpath commit (`bbcd69b2`) **plus** the round of work that
+wired the 5 fork tunables (`busy_poll_us`, `rate_cap_pct`,
+`enet_4mib_buffer`, `pipewire_latency_ms`, `cpu_pinning`) through the
+standard Sunshine config plumbing.
+
+It can be regenerated at any time with:
 
 ```bash
-git diff 1fce18d9..bbcd69b2 -- \
+git diff 1fce18d9..HEAD -- \
     cmake/compile_definitions/common.cmake \
     cmake/targets/common.cmake \
     src/config.h \
@@ -60,9 +65,28 @@ git diff 1fce18d9..bbcd69b2 -- \
     > cachyos-fastpath.patch
 ```
 
+To regenerate the **historical** 7-file patch (just the original
+`bbcd69b2` commit, no fork config plumbing, ~+280 / -2 lines), use:
+
+```bash
+git diff 1fce18d9..bbcd69b2 -- \
+    cmake/compile_definitions/common.cmake \
+    cmake/targets/common.cmake \
+    src/config.h \
+    src/network.cpp \
+    src/platform/linux/misc.cpp \
+    src/platform/linux/pipewire.cpp \
+    src/stream.cpp \
+    > cachyos-fastpath-historical.patch
+```
+
 (`1fce18d9` is the upstream LizardByte/Sunshine commit this fork was
-originally forked from. To regenerate against a newer upstream, use
-`git diff <upstream-commit>..bbcd69b2`.)
+originally forked from. To regenerate against a newer upstream, swap
+the left-hand-side of the diff for that newer commit. The patch has
+been verified to apply cleanly to `lizardbyte-upstream/master` HEAD
+as of June 2026; some 3-way merge conflicts in `pipewire.cpp` and
+`stream.cpp` are expected because upstream has added its own commits
+to those files since the fork base.)
 
 ## How to apply the patch on top of an upstream clone
 

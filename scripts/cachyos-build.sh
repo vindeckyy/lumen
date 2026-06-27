@@ -328,12 +328,64 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Post-install SolarFlare fork verification.
+# This catches a broken install (wrong binary, missing macro, accidental
+# upstream build) before the user runs into it at runtime. Non-fatal: a
+# missing/old binary on a non-standard install path is just a warning.
+# ---------------------------------------------------------------------------
+step "post-install  SolarFlare fork verification"
+if command -v sunshine >/dev/null 2>&1; then
+  _sf_bin="$(command -v sunshine)"
+
+  # Check 1: fork banner must be present.
+  if "$_sf_bin" --version 2>&1 | grep -q 'Fork: SolarFlare'; then
+    say "Fork banner present (✓ SolarFlare fork branding intact)"
+  else
+    warn "Fork banner MISSING from $_sf_bin."
+    warn "  Did you accidentally install an upstream LizardByte/Sunshine build?"
+    warn "  Re-run ./scripts/cachyos-build.sh --clean to force a rebuild."
+  fi
+
+  # Check 2: the 5 fork config keys must parse without "Unrecognized".
+  _sf_tmpconf="$(mktemp -t sf-test.XXXXXX.conf)"
+  cat > "$_sf_tmpconf" <<'SFEOF'
+min_log_level = debug
+busy_poll_us = 75
+rate_cap_pct = 85
+enet_4mib_buffer = false
+pipewire_latency_ms = 12
+cpu_pinning = false
+SFEOF
+  _sf_log="$(mktemp -t sf-test.XXXXXX.log)"
+  # 1-second timeout so this doesn't hang on a misconfigured DRM/CUDA attempt.
+  set +e
+  timeout 1 "$_sf_bin" "$_sf_tmpconf" > "$_sf_log" 2>&1
+  _sf_rc=$?
+  set -e 2>/dev/null || set +e
+  if grep -qE "config: '(busy_poll_us|rate_cap_pct|enet_4mib_buffer|pipewire_latency_ms|cpu_pinning)'" "$_sf_log"; then
+    say "Fork config keys parse cleanly (✓ all 5 keys recognised)"
+  else
+    warn "Fork config keys did NOT appear in the parse log -- something is wrong."
+    warn "  Expected 5 'config: ...' lines for busy_poll_us / rate_cap_pct /"
+    warn "  enet_4mib_buffer / pipewire_latency_ms / cpu_pinning."
+  fi
+  if grep -iE 'Unrecognized.*(busy_poll_us|rate_cap_pct|enet_4mib_buffer|pipewire_latency_ms|cpu_pinning)' "$_sf_log" >/dev/null; then
+    warn "Fork config keys logged as 'Unrecognized' -- the binary is older than the source."
+  fi
+  rm -f "$_sf_tmpconf" "$_sf_log"
+  # Re-enable errexit for the rest of the script if it was on.
+  set +u  # tolerate unbound vars further down
+else
+  warn "sunshine not on \$PATH; skipping post-install fork verification."
+fi
+
+# ---------------------------------------------------------------------------
 # Done
 # ---------------------------------------------------------------------------
 cat <<'EOF'
 
   ══════════════════════════════════════════════════════════════════════
-   Done. Sunshine is installed.
+   SolarFlare is installed.
   ══════════════════════════════════════════════════════════════════════
 
   Quick start:
@@ -348,6 +400,15 @@ cat <<'EOF'
   If you hit "MESA-LOADER: failed to open" or "libnvidia-glcore.so"
   errors, your discrete NVIDIA GPU isn't set up for the right user;
   see https://wiki.cachyos.org/nvidia/ for the CachyOS NVIDIA guide.
+
+  Fork tunables (edit ~/.config/sunshine/sunshine.conf directly):
+    busy_poll_us        ENet SO_BUSY_POLL microseconds (0 disables, default 50)
+    rate_cap_pct        rate-control pacer, % of link speed (50-95, default 80)
+    enet_4mib_buffer    grow ENet UDP buffers to 4 MiB (default true)
+    pipewire_latency_ms PW_KEY_NODE_LATENCY hint (1-40, default 8)
+    cpu_pinning         SCHED_RR + core affinity for capture (default true)
+
+  See docs/CONFIGURATION.md for ranges and behaviour.
 
   Tunable knobs for the build:
     ./scripts/cachyos-build.sh --clean      # nuke the build dir and start over
