@@ -234,7 +234,7 @@ say "Dependencies: assuming OK (build will fail loudly if not)."
 # a missing or stale web UI (the fork's web UI changes, plus the upstream
 # tabs, will be empty).
 if command -v npm >/dev/null 2>&1; then
-  step "3.5/6  Web UI (npm install + vite build)"
+  step "4/7  Web UI (npm install + vite build)"
   if [[ ! -d "$REPO_ROOT/node_modules" ]]; then
     say "Installing npm dependencies (one-time)..."
     (cd "$REPO_ROOT" && npm install --no-audit --no-fund 2>&1 | tail -5)

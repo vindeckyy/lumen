@@ -15,6 +15,7 @@
 #include <spa/pod/builder.h>
 
 // local includes
+#include "config.h"
 #include "cuda.h"
 #include "graphics.h"
 #include "src/main.h"
@@ -225,19 +226,29 @@ namespace pipewire {
 
         struct pw_properties *props = pw_properties_new(PW_KEY_MEDIA_TYPE, "Video", PW_KEY_MEDIA_CATEGORY, "Capture", PW_KEY_MEDIA_ROLE, "Screen", nullptr);
 
-        // CachyOS / Linux local-LAN fast path: ask PipeWire for an 8 ms
-        // node latency. The default is closer to ~20-40 ms which adds 1-2
-        // frames of buffering before the encoder ever sees a pixel. Setting
-        // PW_KEY_NODE_LATENCY is just a hint -- the compositor can still
-        // give us a larger quantum if the GPU/driver can't keep up, but on
-        // CachyOS with Wayland/Mutter + a discrete GPU we usually get what
-        // we ask for.
+        // CachyOS / Linux local-LAN fast path: ask PipeWire for a configurable
+        // node latency (default 8 ms). The default is closer to ~20-40 ms
+        // which adds 1-2 frames of buffering before the encoder ever sees a
+        // pixel. Setting PW_KEY_NODE_LATENCY is just a hint -- the compositor
+        // can still give us a larger quantum if the GPU/driver can't keep up,
+        // but on CachyOS with Wayland/Mutter + a discrete GPU we usually get
+        // what we ask for.
         //
         // Value is a fraction string in nanoseconds: "8192/1000" = 8.192 ms.
         // We pick 8 ms because at 120 fps that's still <1 frame of latency
         // and gives the driver enough headroom to not drop frames.
+        //
+        // SolarFlare fork knob: `pipewire_latency_ms` (range 1-40, default 8).
 #ifdef PW_KEY_NODE_LATENCY
-        pw_properties_set(props, PW_KEY_NODE_LATENCY, "8192/1000");
+        {
+          int ms = config::solarflare.pipewire_latency_ms;
+          if (ms < 1) ms = 1;
+          if (ms > 40) ms = 40;
+          // nanoseconds = ms * 1'000'000; denominator stays 1000 so the
+          // fraction "Ns/1000" reads naturally in pw-top / pw-dump.
+          auto latency_str = std::to_string(ms * 1000000) + "/1000";
+          pw_properties_set(props, PW_KEY_NODE_LATENCY, latency_str.c_str());
+        }
 #endif
 
 #ifdef PW_KEY_TARGET_OBJECT

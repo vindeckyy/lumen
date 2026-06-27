@@ -80,20 +80,23 @@ sudo cmake --install .
 
 ## Configure
 
-All fork-specific settings live in `~/.config/sunshine/sunshine.conf`. Edit
-via the web UI Configuration tab or directly. Defaults match upstream
-hardcoded values, so a default install behaves identically to upstream.
+All fork-specific settings live in `~/.config/sunshine/sunshine.conf`.
+Edit the file directly — these are expert tunables and are **not**
+exposed in the web UI. Defaults match the previously-hardcoded values,
+so a vanilla install behaves identically to a pre-config-fork build.
 
 | Key | Default | Range | Effect |
 |---|---|---|---|
 | `rate_cap_pct` | 80 | 50–95 | Percent of `/sys/class/net/<iface>/speed` to use as the rate-control pacer. |
-| `busy_poll_us` | 50 | 0–200 | `SO_BUSY_POLL` on the ENet socket. 0 disables. |
-| `pipewire_latency_ms` | 8 | 1–40 | `PW_KEY_NODE_LATENCY` hint passed to the compositor. |
+| `busy_poll_us` | 50 | 0–10000 | `SO_BUSY_POLL` on the ENet socket, microseconds. 0 disables. Recommended ≤200. |
+| `pipewire_latency_ms` | 8 | 1–40 | `PW_KEY_NODE_LATENCY` hint passed to the PipeWire compositor. |
 | `cpu_pinning` | true | bool | Capture thread uses `SCHED_RR` priority 10 + physical-core affinity. |
 | `enet_4mib_buffer` | true | bool | ENet socket buffers grown to 4 MiB (overrides kernel default). |
 
 The `cpu_pinning` and `enet_4mib_buffer` knobs fall back to upstream
 defaults when set to `false`. The other three are passed through.
+See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for full behaviour,
+Linux-only caveats, and A/B-test instructions.
 
 ## License
 

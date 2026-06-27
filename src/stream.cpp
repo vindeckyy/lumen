@@ -1500,16 +1500,19 @@ namespace stream {
       }
 
       try {
-        // Use around 80% of the negotiated link speed. Sunshine originally
-        // hardcoded "1 Gbps" which left most of any faster link on the
-        // table -- a 2.4 Gbps Wi-Fi 7 card or 2.5 GbE would still be
-        // paced like a 1 Gbps link. Auto-detect the active interface's
-        // speed (read from sysfs, in Mbps) and pace to 80% of that.
+        // Use a configurable fraction (default 80%) of the negotiated link
+        // speed. Sunshine originally hardcoded "1 Gbps" which left most of
+        // any faster link on the table -- a 2.4 Gbps Wi-Fi 7 card or 2.5 GbE
+        // would still be paced like a 1 Gbps link. Auto-detect the active
+        // interface's speed (read from sysfs, in Mbps) and pace to
+        // `rate_cap_pct` percent of that.
         //
+        // SolarFlare fork knob: `rate_cap_pct` (range 50-95, default 80).
         // Falls back to 1 Gbps if the interface isn't found or sysfs is
         // unreadable, matching the original behaviour exactly.
         size_t link_bps = detail::detect_link_speed_bps(session->localAddress);
-        size_t ratecontrol_packets_in_1ms = link_bps * 80 / 100 / 1000 / blocksize / 8;
+        size_t ratecontrol_packets_in_1ms =
+          link_bps * (size_t) config::solarflare.rate_cap_pct / 100 / 1000 / blocksize / 8;
         if (ratecontrol_packets_in_1ms < 1) ratecontrol_packets_in_1ms = 1;
 
         // Send less than 64K in a single batch.

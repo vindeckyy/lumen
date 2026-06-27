@@ -604,6 +604,19 @@ namespace config {
     {},  // prep commands
   };
 
+  // SolarFlare fork tunables. Defaults match the previously-hardcoded
+  // values in src/network.cpp, src/stream.cpp, src/platform/linux/pipewire.cpp
+  // and src/platform/linux/misc.cpp so a vanilla install behaves identically
+  // to a pre-config-fork build. See README.md > 'Configure' and
+  // docs/CONFIGURATION.md for the documented ranges.
+  solarflare_t solarflare {
+    50,    // busy_poll_us       (SO_BUSY_POLL on the ENet socket)
+    80,    // rate_cap_pct       (rate-control pacer, % of link speed)
+    true,  // enet_4mib_buffer   (grow ENet UDP buffers to 4 MiB)
+    8,     // pipewire_latency_ms (PW_KEY_NODE_LATENCY hint)
+    true,  // cpu_pinning        (SCHED_RR + physical-core affinity)
+  };
+
   bool endline(char ch) {
     return ch == '\r' || ch == '\n';
   }
@@ -1318,6 +1331,16 @@ namespace config {
 
     bool_f(vars, "notify_pre_releases", sunshine.notify_pre_releases);
     bool_f(vars, "system_tray", sunshine.system_tray);
+
+    // SolarFlare fork tunables. See docs/CONFIGURATION.md for ranges and
+    // docs/PORTING.md for the multi-distro background. All defaults match
+    // the previously-hardcoded values, so a vanilla install is identical
+    // to the pre-config-fork behaviour.
+    int_between_f(vars, "busy_poll_us", solarflare.busy_poll_us, {0, 10000});
+    int_between_f(vars, "rate_cap_pct", solarflare.rate_cap_pct, {50, 95});
+    bool_f(vars, "enet_4mib_buffer", solarflare.enet_4mib_buffer);
+    int_between_f(vars, "pipewire_latency_ms", solarflare.pipewire_latency_ms, {1, 40});
+    bool_f(vars, "cpu_pinning", solarflare.cpu_pinning);
 
     int port = sunshine.port;
     int_between_f(vars, "port"s, port, {1024 + nvhttp::PORT_HTTPS, 65535 - rtsp_stream::RTSP_SETUP_PORT});

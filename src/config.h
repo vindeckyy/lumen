@@ -287,12 +287,49 @@ namespace config {
     std::vector<std::string> csrf_allowed_origins;
   };
 
+  // ----------------------------------------------------------------------
+  // SolarFlare fork tunables (Linux local-LAN fast path).
+  //
+  // These are the knobs the README promises exist. Every default here
+  // matches the previous hardcoded value, so a vanilla install behaves
+  // identically to the pre-config-fork build. Set any value to its
+  // "fall back to upstream" choice to disable the SolarFlare tuning
+  // for that subsystem without rebuilding.
+  // ----------------------------------------------------------------------
+  struct solarflare_t {
+    // SO_BUSY_POLL on the ENet socket, in microseconds. 0 disables
+    // busy polling entirely. 50 is a good middle ground for 1-2.5 GbE;
+    // 0-200 is the practical range (kernel cap is 10000 = 10 ms).
+    int busy_poll_us = 50;
+
+    // Percent of the negotiated link speed used as the rate-control
+    // pacer in src/stream.cpp. Valid range 50-95. The previous
+    // hardcoded value was 80.
+    int rate_cap_pct = 80;
+
+    // Grow ENet send/recv buffers to 4 MiB on Linux so a 4K60 stream
+    // never blocks on sendmsg(). Set false to use the kernel default.
+    bool enet_4mib_buffer = true;
+
+    // PW_KEY_NODE_LATENCY hint (ms) passed to the compositor. Mutter
+    // and most other compositors honour the hint, cutting 1-2 frames
+    // of pre-encoder buffering. Range 1-40; values below 4 may cause
+    // pipewire to drop frames under load.
+    int pipewire_latency_ms = 8;
+
+    // On Linux, when adjust_thread_priority(critical) is called we also
+    // push onto SCHED_RR prio 10 and pin to a non-IRQ, non-SMT core.
+    // Set false to fall back to upstream's nice-only behaviour.
+    bool cpu_pinning = true;
+  };
+
   extern video_t video;
   extern audio_t audio;
   extern stream_t stream;
   extern nvhttp_t nvhttp;
   extern input_t input;
   extern sunshine_t sunshine;
+  extern solarflare_t solarflare;
 
   int parse(int argc, char *argv[]);
   std::unordered_map<std::string, std::string> parse_config(const std::string_view &file_content);

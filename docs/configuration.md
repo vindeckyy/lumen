@@ -3265,3 +3265,156 @@ editing the `conf` file in a text editor. Use the examples as reference.
   <summary></summary>
   [TOC]
 </details>
+
+## SolarFlare Fork
+
+@admonition{ Fork-only | These options exist only in the SolarFlare fork
+([vindeckyy/Solar-Flare](https://github.com/vindeckyy/Solar-Flare)).
+They are not part of upstream LizardByte/Sunshine and will be silently
+ignored if set on a vanilla upstream install. Defaults match the
+pre-config-fork hardcoded values, so a vanilla install is bit-for-bit
+identical to a build without this configuration section. }
+
+### busy_poll_us
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            `SO_BUSY_POLL` microseconds on the ENet UDP socket. Cuts
+            receive-side wakeup latency from ~100us-1ms down to the
+            configured value on Wi-Fi without burning a full core.
+            Higher values cost noticeably more CPU for diminishing
+            returns on a wireless link. The kernel accepts up to 10000
+            (10 ms); values above 200 are not recommended.
+            @note{Linux only.}
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            50
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            busy_poll_us = 0
+            @endcode</td>
+    </tr>
+</table>
+
+### rate_cap_pct
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Percent of the negotiated link speed used as the rate-control
+            pacer in the video send loop. The active interface's speed is
+            auto-detected from `/sys/class/net/<iface>/speed`, so a 2.4 Gbps
+            Wi-Fi 7 card or 2.5 GbE NIC is no longer capped at the old
+            hardcoded 1 Gbps. Falls back to 1 Gbps if sysfs is unreadable.
+            Valid range 50-95.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            80
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            rate_cap_pct = 90
+            @endcode</td>
+    </tr>
+</table>
+
+### enet_4mib_buffer
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Grow the ENet UDP socket's send/recv buffers to 4 MiB on
+            Linux so a 4K60 HEVC stream (~25 Mbps) never blocks on
+            `sendmsg()`. `SO_*BUFFORCE` is tried first (lets us exceed
+            `rmem_max`/`wmem_max` without sysctl changes); falls back to
+            `SO_*BUF` if `CAP_NET_ADMIN` is missing. Set to `false` to
+            use the kernel default buffer size.
+            @note{Linux only.}
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            enabled
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            enet_4mib_buffer = disabled
+            @endcode</td>
+    </tr>
+</table>
+
+### pipewire_latency_ms
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            `PW_KEY_NODE_LATENCY` hint passed to the PipeWire compositor.
+            The default 8 ms cuts 1-2 frames of pre-encoder buffering
+            compared to the upstream default of ~20-40 ms. Values below 4
+            may cause the compositor to drop frames under load; values
+            above 20 effectively disable the fast-path optimisation.
+            @note{Linux only.}
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            8
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            pipewire_latency_ms = 16
+            @endcode</td>
+    </tr>
+</table>
+
+### cpu_pinning
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            On the streaming capture thread, push onto `SCHED_RR` prio 10
+            and pin to a non-IRQ, non-SMT sibling core (round-robin
+            across physical cores 1..N/2). Removes the 5-15 ms CFS
+            tail-latency spikes that show up as frame jitter under load
+            and keeps the thread's L1/L2 cache warm frame-to-frame.
+            Set to `false` to fall back to upstream's nice-only behaviour.
+            The calls fail silently under containers or non-PRI users.
+            @note{Linux only.}
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            enabled
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            cpu_pinning = disabled
+            @endcode</td>
+    </tr>
+</table>

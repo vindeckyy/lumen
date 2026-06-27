@@ -415,7 +415,10 @@ namespace platf {
     //
     // These calls fail silently under containers / systemd-run / non-PRI
     // users. That's fine: the thread already has the nice level from above.
-    if (want_realtime) {
+    //
+    // SolarFlare fork knob: `cpu_pinning = false` skips the SCHED_RR + affinity
+    // block entirely (the RTKit/nice path above still applies).
+    if (want_realtime && config::solarflare.cpu_pinning) {
       struct sched_param sp {};
       sp.sched_priority = 10;  // lowest RT priority that still beats CFS
       if (::pthread_setschedparam(pthread_self(), SCHED_RR, &sp) != 0) {

@@ -198,7 +198,9 @@ namespace net {
     // SO_RCVBUFFORCE / SO_SNDBUFFORCE let us exceed rmem_max/wmem_max without
     // requiring sysctl changes (they require CAP_NET_ADMIN, which Sunshine
     // doesn't run with -- so the call silently no-ops if it fails).
-    {
+    // SolarFlare fork knob: `enet_4mib_buffer = false` falls back to the
+    // kernel default UDP buffer size.
+    if (config::solarflare.enet_4mib_buffer) {
       int bufsize = 4 * 1024 * 1024;
       (void) setsockopt(host->socket, SOL_SOCKET, SO_RCVBUFFORCE, &bufsize, sizeof(bufsize));
       (void) setsockopt(host->socket, SOL_SOCKET, SO_SNDBUFFORCE, &bufsize, sizeof(bufsize));
@@ -212,9 +214,12 @@ namespace net {
     // it cuts the receive-side wakeup latency from ~100us-1ms down to ~50us
     // on Wi-Fi without burning a full core. Higher values (e.g. 100us) cost
     // noticeably more CPU for diminishing returns on a wireless link.
+    // SolarFlare fork knob: `busy_poll_us` (0-10000, default 50). 0 disables.
     {
-      int busy_poll_us = 50;
-      (void) setsockopt(host->socket, SOL_SOCKET, SO_BUSY_POLL, &busy_poll_us, sizeof(busy_poll_us));
+      int busy_poll_us = config::solarflare.busy_poll_us;
+      if (busy_poll_us > 0) {
+        (void) setsockopt(host->socket, SOL_SOCKET, SO_BUSY_POLL, &busy_poll_us, sizeof(busy_poll_us));
+      }
     }
 #endif
 
