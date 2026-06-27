@@ -44,9 +44,17 @@ namespace {
   // Follow the .git file's gitdir: line to find the submodule's
   // HEAD file. The HEAD file contains a 40-char lowercase hex SHA
   // (possibly with no trailing newline) when the submodule is on
-  // a detached HEAD.
+  // a detached HEAD. Walks up to find the source root (the test
+  // runs from build/tests/ but .gitmodules is at the source root).
   std::string read_submodule_head_sha(const std::string &path) {
-    const std::string dot_git = path + "/.git";
+    // The test binary's CWD is build/tests/. Walk up to find the
+    // .gitmodules file (which is in the source root).
+    std::string source_root = ".";
+    while (!source_root.empty()) {
+      if (!read_file(source_root + "/.gitmodules").empty()) break;
+      source_root += "/..";
+    }
+    const std::string dot_git = source_root + "/" + path + "/.git";
     const std::string dot_git_contents = read_file(dot_git);
     if (dot_git_contents.empty()) return "";
     const std::string marker = "gitdir: ";
@@ -91,7 +99,7 @@ TEST(SolarflareSubmoduleCherryPicks, SubmoduleDirectoriesPresent) {
   for (const auto &sm : kSubmodules) {
     // The submodule directory must exist on disk.
     struct stat sb;
-    EXPECT_EQ(stat(sm.path, &sb), 0)
+    EXPECT_EQ(stat((std::string(".") + (sm.path[0] == "/" ? "" : "/") + sm.path).c_str(), &sb), 0)
       << "Submodule directory " << sm.path
       << " does not exist on disk. Run 'git submodule update "
          "--init --recursive' to check it out.";
