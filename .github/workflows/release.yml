@@ -1,12 +1,18 @@
 ---
 name: release
 
-# This workflow builds binaries for the cachyos-fastpath branch and
-# uploads them to the GitHub release for the tag that triggered it.
+# This workflow builds binaries for the SolarFlare fork and uploads
+# them to the GitHub release for the tag that triggered it.
+#
+# Tag convention:
+#   - v<YYYY>.<MMM>.<N>-solarflare   (new monthly release)
+#   - v<YYYY>.<MMM>.<N>-cachyos-fastpath (legacy, kept for back-compat)
 #
 # Trigger:
-#   - Push a tag matching v* (e.g. v0.0.1-cachyos-fastpath)
-#   - Or run it manually from the Actions tab (workflow_dispatch)
+#   - Push a tag matching v*
+#   - Or run it manually from the Actions tab (workflow_dispatch);
+#     use a `version` input like `manual-solarflare` to avoid clobbering
+#     an upstream LizardByte/Sunshine release tag.
 #
 # Matrix:
 #   - linux-x86_64: built inside the CachyOS Docker image so the resulting
@@ -18,7 +24,7 @@ name: release
 #   - windows-x86_64: stock GitHub-hosted runner, packaged as a zip.
 #
 # Artifacts uploaded per release:
-#   - sunshine-cachyos-linux-x86_64.tar.gz
+#   - sunshine-solarflare-linux-x86_64.tar.gz
 #   - sunshine-macos-x86_64.tar.gz
 #   - sunshine-macos-arm64.tar.gz
 #   - sunshine-windows-x86_64.zip
@@ -30,9 +36,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g. v0.0.1-cachyos-fastpath)'
+        description: 'Release version (e.g. v2026.999.2-solarflare)'
         required: true
-        default: 'manual-cachyos-fastpath'
+        default: 'manual-solarflare'
 
 permissions:
   contents: write   # needed to create the release and upload assets
@@ -107,12 +113,12 @@ jobs:
       - name: Tarball
         run: |
           cd stage
-          tar czf ../sunshine-cachyos-linux-x86_64.tar.gz sunshine
+          tar czf ../sunshine-solarflare-linux-x86_64.tar.gz sunshine
 
       - name: Upload as release asset
         uses: softprops/action-gh-release@v2
         with:
-          files: sunshine-cachyos-linux-x86_64.tar.gz
+          files: sunshine-solarflare-linux-x86_64.tar.gz
           fail_on_unmatched_files: true
           generate_release_notes: true
 
