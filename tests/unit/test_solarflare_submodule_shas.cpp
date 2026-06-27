@@ -77,7 +77,15 @@ TEST(SolarflareSubmoduleShas, OnDiskShasAreRound6Bumped) {
     }
     size_t line_start = status.rfind('\n', path_pos);
     line_start = (line_start == std::string::npos) ? 0 : line_start + 1;
-    const std::string line = status.substr(line_start, path_pos - line_start);
+    std::string line = status.substr(line_start, path_pos - line_start);
+    // 'git submodule status' pads the SHA column for the '-' marker
+    // used on uninitialised submodules, so the line begins with a
+    // single space (e.g. " cd6918f..."). Strip leading whitespace
+    // before extracting the SHA.
+    const size_t first_non_ws = line.find_first_not_of(" \t");
+    if (first_non_ws != std::string::npos) {
+      line = line.substr(first_non_ws);
+    }
     EXPECT_GE(line.size(), 40u) << "Line too short for " << sm.name << ": '" << line << "'";
     const std::string sha = line.substr(0, 40);
     EXPECT_EQ(sha.substr(0, 7), std::string(sm.round6_sha_prefix))
