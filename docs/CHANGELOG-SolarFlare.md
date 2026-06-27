@@ -315,7 +315,122 @@ GitHub-visible docs; everything else (CONTRIBUTING.md, NOTICE,
 SECURITY.md, docs/PORTING.md, docs/CONFIGURATION.md,
 docs/configuration.md) was already version-agnostic.
 
-Final fork state: 56 commits + 1 fork-specific release tag,
+### Rounds 34-36 (NVENC tuning knobs + 3 one-click presets)
+
+Big fork-only feature. Exposes 10 new NVENC tuning options in the
+web UI + config file, plus a one-click "tuning preset" dropdown
+that auto-fills the underlying knobs with one of three recommended
+configurations.
+
+Group A (already in `nvenc::nvenc_config` struct, hardcoded):
+- `nvenc_weighted_prediction` (bool, default false) — improves
+  fade-in / fade-out compression via B-frame weighted prediction.
+  Costs a small amount of CUDA cores. Off by default; recommended
+  on for cinematic content.
+- `nvenc_enable_min_qp` (bool, default false) — clamp peak QP to
+  save bitrate on easy scenes. Pairs with the three per-codec
+  `nvenc_min_qp_*` keys.
+- `nvenc_min_qp_h264` / `nvenc_min_qp_hevc` (1-51, defaults 19 / 23)
+  / `nvenc_min_qp_av1` (1-255, default 23) — per-codec min-QP.
+- `nvenc_filler_data` (bool, default false) — adds filler data to
+  hit target bitrate on content that compresses below it. Testing
+  only.
+
+Group B (newly plumbed struct + fields + FFmpeg-style plumbing):
+- `nvenc_rc_lookahead` (int, 0-31, default 0) — rate-control
+  lookahead frames. 0 = disabled (lowest latency). 20-40 = good
+  quality / latency trade-off. Capped at 31 by NVENC API.
+  Ignored when `nvenc_zerolatency = true`.
+- `nvenc_surfaces` (int, -1..32, default -1) — encode surfaces.
+  -1 = driver default. 1-32 = explicit count. Currently a no-op
+  pass-through to NVENC SDK in this header set (the SDK field name
+  varies by SDK version); exposed for forward compatibility.
+- `nvenc_bframes` (int, 0-4, default 0) — B-frames between
+  P-frames. 0 = no B-frames (sub-frame streaming latency). 2-4 =
+  better compression at the cost of pipeline latency. Ignored
+  when `nvenc_zerolatency = true`.
+- `nvenc_zerolatency` (bool, default false) — mirrors FFmpeg's
+  `tune=zerolatency`. Forces `enableLookahead=0`,
+  `zeroReorderDelay=1`, `bframes=0` regardless of what the other
+  knobs are set to. Recommended for interactive gaming.
+- `nvenc_aq_strength` (int, 1-15, default 8) — paired with
+  `nvenc_spatial_aq`. 1 = subtle, 15 = aggressive bit
+  redistribution across the frame.
+- `nvenc_temporal_aq` (bool, default false) — temporal AQ,
+  redistributes bits across frames instead of within a frame.
+  Pairs with spatial AQ for full 2D AQ.
+
+One-click tuning preset (the headline feature):
+- `nvenc_tuning_preset` (int, -1..2, default -1) —
+  -1 = manual (don't touch anything)
+  0 = latency-optimised (P1, bframes=0, zerolatency, lookahead=0,
+    twopass=quarter, AQ off, surfaces=driver)
+  1 = balanced (P4, bframes=2, lookahead=20, twopass=quarter,
+    AQ on, aq_strength=8, temporal_aq on, weighted_pred on,
+    vbv_increase=50, surfaces=driver)
+  2 = quality-optimised (P7, bframes=4, lookahead=40,
+    twopass=full, AQ on, aq_strength=12, temporal_aq on,
+    weighted_pred on, min_qp on (h264=22, hevc=26, av1=26),
+    vbv_increase=100, surfaces=driver)
+
+When a preset is set, `apply_config()` overwrites the corresponding
+`nvenc_*` fields with the preset's recommended values, then the
+backend reads them. The user can still tweak individual knobs after
+picking a preset — the preset is applied once at config-parse time,
+not on every encoder-create.
+
+Backend wiring (src/nvenc/nvenc_base.cpp):
+- `zerolatency=true` short-circuits to `enableLookahead=0`,
+  `zeroReorderDelay=1`, `bframes=0` regardless of what the
+  user set `rc_lookahead` / `bframes` to. The user-facing config
+  fields are kept intact so the Web UI stays consistent.
+- `bframes>0 && !zerolatency` sets `zeroReorderDelay=0` and
+  raises `maxNumRefFramesInDPB` by `bframes+1` in each per-codec
+  arm (H.264 / HEVC / AV1).
+- `aq_strength` flows to `NV_ENC_RC_PARAMS.aqStrength` when AQ is
+  on; zero when AQ is off.
+- `temporal_aq` flows to `NV_ENC_RC_PARAMS.enableTemporalAQ`.
+- Encoder-creation log line now surfaces: `spatial-aq:N`,
+  `temporal-aq`, `rc-lookahead=N`, `zerolatency`, `bframes=N`,
+  `surfaces=N`, `qpmin=N`, `weighted-prediction`, `filler-data`.
+
+Web UI (NvidiaNvencEncoder.vue, 290 lines, was 131):
+- New top dropdown: `nvenc_tuning_preset` (Manual / Latency /
+  Balanced / Quality) — auto-fills the knobs below via Vue watch()
+  on change.
+- AQ strength number-input shown only when `nvenc_spatial_aq`
+  is on.
+- Temporal AQ checkbox alongside spatial AQ.
+- Weighted prediction checkbox.
+- Rate-control lookahead number-input (0-31).
+- B-frames number-input (0-4).
+- Zero-latency tune checkbox.
+- Per-codec min-QP number-inputs under the Misc accordion (shown
+  only when `nvenc_enable_min_qp` is on).
+- Filler data checkbox in Misc.
+
+Locale (en.json): 28 new keys.
+
+Tests (tests/unit/test_config_nvenc_keys.cpp, 386 lines, 8 tests):
+- Defaults match previously-hardcoded values.
+- In-range writes are honoured (boundary checks at 51/255/31/32/15).
+- Latency preset overrides all 11 knobs.
+- Balanced preset overrides all 11 knobs (P4, bframes=2,
+  lookahead=20, AQ on).
+- Quality preset overrides all 11 knobs (P7, bframes=4,
+  lookahead=40, full twopass, min_qp on).
+- Manual preset leaves every knob untouched.
+- Defaults are inside documented ranges.
+- Zerolatency override documents the backend short-circuit.
+
+Verification:
+- `ninja sunshine`: clean (nvenc_base.cpp + config.cpp rebuilt).
+- `ninja test_sunshine`: 8 new NvencTuningTest cases pass, no
+  regressions on existing tests.
+- `cmake --install .`: clean.
+- `./sunshine --version`: clean exit 0, fork banner + commit hash.
+
+Final fork state: 57 commits + 1 fork-specific release tag,
 376 tests, 371 passing, 5 skipped, 0 failed.
 
 ## See also
