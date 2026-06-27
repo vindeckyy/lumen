@@ -102,6 +102,9 @@ void log_publisher_data() {
   BOOST_LOG(info) << "Package Publisher: "sv << SUNSHINE_PUBLISHER_NAME;
   BOOST_LOG(info) << "Publisher Website: "sv << SUNSHINE_PUBLISHER_WEBSITE;
   BOOST_LOG(info) << "Get support: "sv << SUNSHINE_PUBLISHER_ISSUE_URL;
+#ifdef SOLARFLARE_FORK
+  BOOST_LOG(info) << "Fork: "sv << SOLARFLARE_FORK_NAME << " ("sv << SOLARFLARE_FORK_REPO << ") -- see docs/CONFIGURATION.md for fork tunables."sv;
+#endif
 }
 
 #ifdef _WIN32

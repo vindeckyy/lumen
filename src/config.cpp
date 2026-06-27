@@ -610,10 +610,10 @@ namespace config {
   // to a pre-config-fork build. See README.md > 'Configure' and
   // docs/CONFIGURATION.md for the documented ranges.
   solarflare_t solarflare {
-    50,    // busy_poll_us       (SO_BUSY_POLL on the ENet socket)
-    80,    // rate_cap_pct       (rate-control pacer, % of link speed)
+    50,  // busy_poll_us       (SO_BUSY_POLL on the ENet socket)
+    80,  // rate_cap_pct       (rate-control pacer, % of link speed)
     true,  // enet_4mib_buffer   (grow ENet UDP buffers to 4 MiB)
-    8,     // pipewire_latency_ms (PW_KEY_NODE_LATENCY hint)
+    8,  // pipewire_latency_ms (PW_KEY_NODE_LATENCY hint)
     true,  // cpu_pinning        (SCHED_RR + physical-core affinity)
   };
 

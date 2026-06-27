@@ -1,13 +1,26 @@
-# Sunshine — CachyOS / Linux local-LAN fast path
+# SolarFlare — what this fork is and how to apply it to upstream
 
-This is a fork-ready patch set. Seven files changed, +280 / -2 lines.
+> Historical artifact. This document was originally written for the
+> first cut of the cachyos-fastpath patch (7 files, +280/-2 lines).
+> The SolarFlare fork has since grown well beyond that: web UI
+> rebrand, fork-specific configuration knobs, dedicated docs, and
+> CI tweaks. This file documents **the original fastpath patch**,
+> which is still shipped as `cachyos-fastpath.patch` for users who
+> want to apply just the latency tuning on top of an otherwise
+> vanilla LizardByte/Sunshine checkout.
+>
+> For the full SolarFlare fork, just use the master branch of this
+> repo (`git clone https://github.com/vindeckyy/Solar-Flare.git`).
+> The fork-specific build script (`scripts/cachyos-build.sh`) and
+> config knobs (see `docs/CONFIGURATION.md`) are only available on
+> the fork — they are not in this patch.
 
-## What it does
+## What `cachyos-fastpath.patch` contains
 
-Optimizes Sunshine for **zero-latency game streaming over a local LAN** on
-CachyOS x86_64 + GNOME/Wayland + PipeWire + an NVIDIA Turing (or any
-modern) GPU. All changes are surgical — every flag is opt-out via a CMake
-variable, every Linux-only block is `#ifdef __linux__`-guarded.
+Optimises Sunshine for **zero-latency game streaming over a local LAN**
+on CachyOS x86_64 + GNOME/Wayland + PipeWire + an NVIDIA Turing (or any
+modern) GPU. All changes are surgical — every flag is opt-out via a
+CMake variable, every Linux-only block is `#ifdef __linux__`-guarded.
 
 | Layer                | Change                                                                                  | Expected win                       |
 |----------------------|-----------------------------------------------------------------------------------------|------------------------------------|
@@ -17,9 +30,9 @@ variable, every Linux-only block is `#ifdef __linux__`-guarded.
 | ENet UDP socket      | 4 MiB send/recv buffers (`SO_*BUFFORCE` with `SO_*BUF` fallback) + `SO_BUSY_POLL=50µs`   | Cuts receive-side wakeup latency; no more `sendmsg()` blocking when a 4K60 frame backs up the kernel queue |
 | Video send pacing    | Auto-detect link speed from `/sys/class/net/<iface>/speed` instead of hardcoded 80% of 1 Gbps | **Your 2.4 Gbps Wi-Fi 7 card now paces to 80% of 2.4 Gbps, not 800 Mbps — a 3× rate-control ceiling bump** |
 | PipeWire             | `PW_KEY_NODE_LATENCY = 8.192 ms` (default ~20–40 ms)                                     | 1–2 fewer frames of compositor-side buffering |
-| Upstream bugs        | Add missing `<array>` and `<span>` includes in `config.h` and `misc.cpp`                | Sunlight won't compile on clean GCC 13+/CachyOS toolchains without these |
+| Upstream bugs        | Add missing `<array>` and `<span>` includes in `config.h` and `misc.cpp`                | Sunshine won't compile on clean GCC 13+/CachyOS toolchains without these |
 
-## Files
+## Files in the original patch (7 files, +280 / -2 lines)
 
 ```
 cmake/compile_definitions/common.cmake |  68 ++++++++ (CachyOS native flags)
@@ -31,18 +44,37 @@ src/platform/linux/pipewire.cpp        |  16 +    (PipeWire node latency)
 src/stream.cpp                         | 108 ++   (link-speed autodetect)
 ```
 
-## How to apply
+These are exactly the seven files touched by commit `bbcd69b2`
+("CachyOS/Linux local-LAN latency fast path") on the SolarFlare fork.
+The patch can be regenerated at any time with:
 
 ```bash
-git clone https://github.com/lizardbyte/sunshine.git
-cd sunshine
-git checkout -b cachyos-fastpath
+git diff 1fce18d9..bbcd69b2 -- \
+    cmake/compile_definitions/common.cmake \
+    cmake/targets/common.cmake \
+    src/config.h \
+    src/network.cpp \
+    src/platform/linux/misc.cpp \
+    src/platform/linux/pipewire.cpp \
+    src/stream.cpp \
+    > cachyos-fastpath.patch
+```
+
+(`1fce18d9` is the upstream LizardByte/Sunshine commit this fork was
+originally forked from. To regenerate against a newer upstream, use
+`git diff <upstream-commit>..bbcd69b2`.)
+
+## How to apply the patch on top of an upstream clone
+
+```bash
+git clone https://github.com/LizardByte/Sunshine.git
+cd Sunshine
+git checkout 1fce18d9   # the upstream base this patch was generated against
 git apply ../cachyos-fastpath.patch
 ```
 
-Or, since the patch is already committed on the `cachyos-fastpath` branch
-in `/workspace/sunshine`, you can just rsync/tar the directory straight up
-to your fork.
+Or just rsync/tar the SolarFlare fork's master branch straight up to
+your fork — the patch is already committed there.
 
 ## How to build (CachyOS)
 
@@ -59,52 +91,100 @@ cmake --build build
 sudo cmake --install build
 ```
 
+Or use the fork's one-shot script:
+
+```bash
+git clone --recurse-submodules https://github.com/vindeckyy/Solar-Flare.git
+cd Solar-Flare
+./scripts/cachyos-build.sh   # CachyOS / Arch family
+# ./scripts/cachyos-build.sh --no-pacman   # if deps already installed
+# ./scripts/cachyos-build.sh --clean       # nuke build/ first
+```
+
 Build will print:
+
 ```
 -- CachyOS native build: -march=x86-64-v3 -mtune=generic
 ```
+
 (or `-march=znver2 -mtune=znver2` on a Zen 2 host — your 4600H).
 
 ## How to disable any of it
 
 - Disable native compile flags entirely:
   `-DSUNSHINE_CACHYOS_NATIVE=OFF`
-- Disable LTO at link time: edit `cmake/targets/common.cmake` and comment
-  the `if(SUNSHINE_CACHYOS_NATIVE ...)` block.
+- Disable LTO at link time: edit `cmake/targets/common.cmake` and
+  comment the `if(SUNSHINE_CACHYOS_NATIVE ...)` block.
 - Disable SCHED_RR + affinity: edit `src/platform/linux/misc.cpp` and
   remove the `#if !defined(__FreeBSD__)` block at the bottom of
   `adjust_thread_priority()`.
-- Disable the new UDP socket options: edit `src/network.cpp` and remove
-  the `#ifdef __linux__` block in `host_create()`.
+- Disable the new UDP socket options: edit `src/network.cpp` and
+  remove the `#ifdef __linux__` block in `host_create()`.
 - Disable the link-speed autodetect: in `src/stream.cpp`, replace the
   `link_bps` lookup with the original `std::giga::num * 80 / 100`.
+- Disable any individual fork tunable at runtime: set the
+  corresponding key in `~/.config/sunshine/sunshine.conf` to its
+  "fall back to upstream" choice. See `docs/CONFIGURATION.md` for
+  the table.
 
-## Why these specific changes for your rig
+## What the patch does NOT do
 
-- **AMD Ryzen 5 4600H (Zen 2)**: `-march=znver2` lets the compiler emit
-  AVX2 / BMI2 / FMA for the BGR→NV12 color conversion and Reed-Solomon
-  FEC encode, which is the two biggest CPU hot loops in the encode path.
-- **NVIDIA GTX 1650 Mobile (Turing, TU117)**: NVENC 7.x already uses
-  H.264 + HEVC at full speed with `zerolatency=1` + `tune=ultra_low_latency`
-  — Sunshine's defaults are already optimal for Turing. No change needed.
-- **GNOME 50.2 / Mutter / Wayland**: PipeWire DMA-BUF path is the right
-  capture method (zero-copy to encoder). The `PW_KEY_NODE_LATENCY` hint
-  tightens the compositor's quantum; Mutter usually honours it.
-- **2.4 Gbps Wi-Fi 7**: The previous rate-control was capping you at
-  800 Mbps. With the new sysfs-based detection, you'll pace to ~1.92 Gbps.
-- **15 GiB RAM**: Plenty of headroom for ENet's 4 MiB send/recv buffers
-  + LTO working set.
+The patch is **only** the latency tuning. The following SolarFlare
+fork work is **not** in the patch and lives in additional commits on
+master:
+
+- **SolarFlare web UI rebrand** (logos, footer, "new version" check
+  pointed at this fork's repo).
+- **Fork-specific configuration plumbing** (`busy_poll_us`,
+  `rate_cap_pct`, `enet_4mib_buffer`, `pipewire_latency_ms`,
+  `cpu_pinning` — see `docs/CONFIGURATION.md`).
+- **Multi-distro build script** (`scripts/cachyos-build.sh` with
+  Arch / Debian / Fedora / openSUSE auto-detection).
+- **Porting and configuration docs** (`docs/PORTING.md`,
+  `docs/CONFIGURATION.md`, and the new `SolarFlare Fork` section
+  appended to `docs/configuration.md`).
+- **Fork CI** (`.github/workflows/ci-archlinux.yml` and friends
+  customised to skip Flatpak; see `docs/PORTING.md` for the
+  rationale).
+- **Test framework additions** for the fork-specific config keys
+  (`tests/unit/test_config_fork_keys.cpp`).
+
+If you want all of this, just clone the fork directly. The patch is
+only useful if you want the latency tuning on top of an otherwise
+stock LizardByte/Sunshine tree.
+
+## Why these specific changes for the original dev rig
+
+- **AMD Ryzen 5 4600H (Zen 2)**: `-march=znver2` lets the compiler
+  emit AVX2 / BMI2 / FMA for the BGR→NV12 color conversion and
+  Reed-Solomon FEC encode, which are the two biggest CPU hot loops
+  in the encode path.
+- **NVIDIA GTX 1650 Mobile (Turing, TU117)**: NVENC 7.x already
+  uses H.264 + HEVC at full speed with `zerolatency=1` +
+  `tune=ultra_low_latency` — Sunshine's defaults are already
+  optimal for Turing. No change needed.
+- **GNOME 50.2 / Mutter / Wayland**: PipeWire DMA-BUF path is the
+  right capture method (zero-copy to encoder). The
+  `PW_KEY_NODE_LATENCY` hint tightens the compositor's quantum;
+  Mutter usually honours it.
+- **2.4 Gbps Wi-Fi 7**: The previous rate-control was capping at
+  800 Mbps. With the new sysfs-based detection, you'll pace to
+  ~1.92 Gbps.
+- **15 GiB RAM**: Plenty of headroom for ENet's 4 MiB send/recv
+  buffers + LTO working set.
 
 ## Verification status
 
-- `cmake --build` configure step **passes** (verified).
-- All seven modified source files pass `-fsyntax-only` with the project's
-  full include graph (verified).
-- Full link step requires GCC 13+ (`<format>`); your CachyOS toolchain
-  has GCC 14+, so it'll build. This Debian-12 sandbox only ships GCC 12
-  and was used only for syntax verification.
+- `cmake --build` configure step **passes** on the fork (verified).
+- All seven modified source files pass `-fsyntax-only` with the
+  project's full include graph.
+- Full link step requires GCC 13+ (`<format>`); the CachyOS
+  toolchain has GCC 14+, so it builds.
 - No behaviour changes on macOS or Windows — all Linux-only code is
   guarded.
+- The fork-specific test suite
+  (`./build/tests/test_sunshine --gtest_filter='ConfigConsistencyTest.*'`)
+  is green.
 
 ## Post-install runtime tweaks (optional, do once)
 
@@ -122,5 +202,14 @@ sudo sysctl -w net.core.wmem_max=8388608
 sudo sysctl -w net.ipv4.tcp_congestion_control=bbr
 ```
 
-These are optional — Sunshine's per-socket setsockopt already covers the
-common case.
+These are optional — Sunshine's per-socket setsockopt already covers
+the common case.
+
+## See also
+
+- `README.md` — fork entry point.
+- `docs/CONFIGURATION.md` — fork-specific config keys.
+- `docs/PORTING.md` — multi-distro build instructions.
+- `docs/configuration.md` `> SolarFlare Fork` — fork keys documented
+  in the same format as the upstream options.
+- `scripts/cachyos-build.sh` — one-shot build script.

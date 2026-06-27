@@ -177,7 +177,9 @@ int main(int argc, char *argv[]) {
   // the version should be printed to the log before anything else
   BOOST_LOG(info) << PROJECT_NAME << " version: " << PROJECT_VERSION << " commit: " << PROJECT_VERSION_COMMIT;
 
-  // Log publisher metadata
+  // Log publisher metadata (also prints the SolarFlare fork banner when
+  // SOLARFLARE_FORK is enabled at build time -- see log_publisher_data()
+  // in src/entry_handler.cpp).
   log_publisher_data();
 
   // Log modified_config_settings

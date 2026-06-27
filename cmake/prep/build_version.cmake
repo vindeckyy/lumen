@@ -150,3 +150,16 @@ list(APPEND SUNSHINE_DEFINITIONS PROJECT_VERSION_MAJOR="${PROJECT_VERSION_MAJOR}
 list(APPEND SUNSHINE_DEFINITIONS PROJECT_VERSION_MINOR="${PROJECT_VERSION_MINOR}")
 list(APPEND SUNSHINE_DEFINITIONS PROJECT_VERSION_PATCH="${PROJECT_VERSION_PATCH}")
 list(APPEND SUNSHINE_DEFINITIONS PROJECT_VERSION_COMMIT="${GITHUB_COMMIT}")
+
+# ----------------------------------------------------------------------------
+# SolarFlare fork identity.
+# When SOLARFLARE_FORK is ON (the default on this repo), expose a compile-time
+# macro so source code can identify itself as the fork. Off on upstream builds
+# via -DSOLARFLARE_FORK=OFF so this file is safe to vendor back upstream.
+# ----------------------------------------------------------------------------
+option(SOLARFLARE_FORK "Build the SolarFlare fork branding (version banner + publisher URL)." ON)
+if(SOLARFLARE_FORK)
+    list(APPEND SUNSHINE_DEFINITIONS SOLARFLARE_FORK=1)
+    list(APPEND SUNSHINE_DEFINITIONS SOLARFLARE_FORK_NAME="SolarFlare")
+    list(APPEND SUNSHINE_DEFINITIONS SOLARFLARE_FORK_REPO="https://github.com/vindeckyy/Solar-Flare")
+endif()

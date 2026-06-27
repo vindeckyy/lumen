@@ -242,8 +242,12 @@ namespace pipewire {
 #ifdef PW_KEY_NODE_LATENCY
         {
           int ms = config::solarflare.pipewire_latency_ms;
-          if (ms < 1) ms = 1;
-          if (ms > 40) ms = 40;
+          if (ms < 1) {
+            ms = 1;
+          }
+          if (ms > 40) {
+            ms = 40;
+          }
           // nanoseconds = ms * 1'000'000; denominator stays 1000 so the
           // fraction "Ns/1000" reads naturally in pw-top / pw-dump.
           auto latency_str = std::to_string(ms * 1000000) + "/1000";
