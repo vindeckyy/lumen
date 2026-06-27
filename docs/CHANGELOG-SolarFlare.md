@@ -206,6 +206,37 @@ any runtime bugs).
   --hard HEAD` was needed. ABORTED for the third time. The fork
   already has Doxygen-style comments on its key files; adding the
   upstream's 11k comment-only lines is not worth the merge cost.
+### Round 15/16 (doxygen cherry-pick: 4th + 5th attempts)
+
+The huge `a991a962 docs(doxygen): enforce warn if undocumented` commit
+was re-attempted with a more selective strategy: take only the
+doxygen-only docs/build files, no C++ source files. The fork already
+has Doxygen-style comments on its key files; adding the upstream's
+11k comment-only C++ source changes is not worth the merge cost.
+
+Round 15 took 5 doxygen-only files that auto-merged cleanly:
+* `AGENTS.md` — doxygen comments on build/run/test instructions
+* `docs/Doxyfile` — `WARN_AS_ERROR`, `EXTRACT_ALL` toggles
+* `docs/contributing.md` — doxygen admonitions + new 'Build the docs' section
+* `pyproject.toml` — doxygen comment on the `[project]` table
+* `.run/docs.run.xml` — NEW CLion "Run Configuration" for the Doxygen docs target
+
+Round 16 took 5 CI workflow files (minor infra tweaks, ~30 lines total):
+* `ci.yml` — added `VIRUSTOTAL_API_KEY` env var
+* `ci-freebsd.yml`, `ci-linux.yml`, `ci-macos.yml`, `ci-windows.yml` —
+  typo fixes + version bumps
+
+Deliberately NOT taken (still skipped):
+* `packaging/sunshine.rb` — large restructure (~30 lines) that's
+  not a doxygen-only change, separate concern
+* `README.md` — has conflict with the fork's own README rewrite
+* `src/**/*.cpp` and `src/**/*.h` — 125+ files, all conflicts,
+  11k comment-only lines, definitively aborted
+
+Total upstream cherry-picks integrated across all 16 rounds: 23
+(22 safe + 1 selective from rounds 15+16). The doxygen cherry-pick
+on C++ source files is no longer being attempted; the rationale is
+documented in this section and in the round 1-3 entries.
 
 ## See also
 
