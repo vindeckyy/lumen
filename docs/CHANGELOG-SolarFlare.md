@@ -166,6 +166,46 @@ any runtime bugs).
   lines / +426 / -22 (was 569 / +379 / -2 in round 3, 646 / +414 / -11
   in round 5). Verified to apply cleanly to LizardByte/Sunshine @
   1fce18d9 with 0 conflicts.
+### Round 11/12
+
+- **New regression test for upstream `e40d355f fix(video)` cherry-pick**
+  (Round 7 landed the fix; Round 11 added the test). 5 new tests in
+  `tests/unit/test_thread_safe_try_pop.cpp` (SafeEventTryPop suite):
+  DrainsAfterRaise, EmptyEventReturnsFalse,
+  MultipleRaisesKeepLatestValue, TryPopIsNonBlocking, and
+  VideoCppUsesTryPopForDrain (a build-time guard that fails if
+  someone reverts the `try_pop()` fix back to `peek()+pop()`).
+  Total: 336 -> 341 passing.
+- **Fork overrides for the last 2 LizardByte-pinned workflows**:
+  - `.github/workflows/update-pages.yml` (calls into
+    LizardByte/LizardByte.github.io which the fork can't write to)
+  - `.github/workflows/localize.yml` (calls into
+    LizardByte/lizardbyte-common for Crowdin translation; the fork
+    already includes all locale JSON files from the round-6 l10n
+    cherry-pick)
+  Both replaced with one-line no-op explanations.
+- **Fork version suffix on the binary**: `project(Sunshine VERSION
+  0.0.0-solarflare.0 ...)` in `CMakeLists.txt` and
+  `version = "0.0.0-solarflare.0"` in `pyproject.toml`. Was
+  `0.0.0` (inherited from upstream). `sunshine --version` will now
+  show `0.0.0-solarflare.0` (or the dirty suffix) instead of just
+  `0.0.0` once a build picks it up; the next tag will bump the
+  micro version.
+
+### Skipped this round
+
+- The doxygen cherry-pick `a991a962` was re-attempted for a
+  selective application of just the docs/build files (Doxyfile,
+  AGENTS.md, README.md, pyproject.toml, packaging/sunshine.rb,
+  .run/docs.run.xml, .github/workflows/ci-*.yml). 6 of those
+  files also conflicted (README.md, packaging/sunshine.rb, plus
+  4 .github/workflows/ci-*.yml that the fork had already
+  pinned-to-upstream via earlier commits), and the doxygen
+  commit's commit message updates for the C++ source files
+  contaminated the working tree to the point where a `git reset
+  --hard HEAD` was needed. ABORTED for the third time. The fork
+  already has Doxygen-style comments on its key files; adding the
+  upstream's 11k comment-only lines is not worth the merge cost.
 
 ## See also
 
