@@ -19,9 +19,13 @@ cuda_system_package=0
 cuda_system_package_name=""
 force_cuda_runfile=0
 num_processors=$(nproc)
+# SolarFlare fork: match the cmake/prep/options.cmake defaults so the
+# publisher metadata in sunshine.log points at the fork repo. Override
+# with --publisher-* args on the command line to ship a different
+# downstream binary.
 publisher_name="Third Party Publisher"
-publisher_website=""
-publisher_issue_url="https://app.lizardbyte.dev/support"
+publisher_website="https://github.com/vindeckyy/Solar-Flare"
+publisher_issue_url="https://github.com/vindeckyy/Solar-Flare/issues"
 skip_cleanup=0
 skip_cuda=0
 skip_libva=0
