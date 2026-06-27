@@ -108,18 +108,31 @@ TEST(SolarflareBuildDrmCherryPick, LibCapForAnyLinuxBuild) {
     << "Could not read cmake/compile_definitions/linux.cmake.";
 
   // Find the LIBCAP block. After the cherry-pick, the
-  // 'find_package(LIBCAP REQUIRED)' is preceded by 'if(LINUX)' (the
-  // global LINUX flag), not 'if(SUNSHINE_ENABLE_DRM)'.
-  const std::string libcap_line = find_line(content, "find_package(LIBCAP REQUIRED)");
-  EXPECT_TRUE(libcap_line.find("if(LINUX)") != std::string::npos)
-    << "The 'find_package(LIBCAP REQUIRED)' line is gated on "
-       "'if(SUNSHINE_ENABLE_DRM)' (or some other condition). The "
-       "a3552a43 cherry-pick made it gate on the global 'if(LINUX)' "
-       "so libcap is found for any Linux build, not just DRM. "
-       "Re-apply the cherry-pick.";
+  // 'find_package(LIBCAP REQUIRED)' is preceded (on the previous
+  // line) by 'if(LINUX)' (the global LINUX flag), not
+  // 'if(SUNSHINE_ENABLE_DRM)'.
+  const size_t libcap_pos = content.find("find_package(LIBCAP REQUIRED)");
+  ASSERT_NE(libcap_pos, std::string::npos)
+    << "Could not find 'find_package(LIBCAP REQUIRED)' in the file.";
+  // Walk backwards to the start of the previous line.
+  size_t line_start = content.rfind('\n', libcap_pos);
+  ASSERT_NE(line_start, std::string::npos);
+  line_start += 1;  // skip the newline
+  // The if() condition is on the line immediately before.
+  size_t prev_line_end = (line_start == 0) ? 0 : content.rfind('\n', line_start - 1);
+  size_t prev_line_start = (prev_line_end == std::string::npos) ? 0 : prev_line_end + 1;
+  std::string prev_line = content.substr(prev_line_start, line_start - prev_line_start - 1);
+  EXPECT_TRUE(prev_line.find("if(LINUX)") != std::string::npos)
+    << "The line before 'find_package(LIBCAP REQUIRED)' is '"
+       << prev_line << "'. The a3552a43 cherry-pick made it gate "
+       "on the global 'if(LINUX)' so libcap is found for any "
+       "Linux build, not just DRM. Re-apply the cherry-pick.";
 
-  // The old "if(${SUNSHINE_ENABLE_DRM})" / "find_package(LIBCAP"
-  // chain must be gone.
+  // The old "if(${SUNSHINE_ENABLE_DRM})" gating of libcap must be
+  // gone. The old format was either "if(SUNSHINE_ENABLE_DRM)\n
+  // find_package(LIBCAP" or the libcap find_package was inside the
+  // DRM block. Either way, a SUNSHINE_ENABLE_DRM-gated libcap find
+  // is wrong.
   EXPECT_FALSE(contains(content, "if(${SUNSHINE_ENABLE_DRM})\n    find_package(LIBCAP"))
     << "The old 'if(SUNSHINE_ENABLE_DRM) find_package(LIBCAP' "
        "chain is still in the file. The a3552a43 cherry-pick moved "
