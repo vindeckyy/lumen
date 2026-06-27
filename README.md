@@ -104,14 +104,27 @@ GPL-3.0-only, inherited from upstream LizardByte/Sunshine.
 
 ## Credits
 
-- LizardByte maintainers and contributors. The upstream Sunshine project is
-  theirs.
-- LizardByte. The web UI, Flatpak packaging, Windows installer, macOS .dmg,
-  FreeBSD .pkg, AUR package, Homebrew formula, cross-platform plumbing.
+- **LizardByte** maintainers and contributors. The upstream Sunshine
+  project is theirs — the fork is a derivative of their work.
+- **LizardByte** did the heavy lifting on the cross-platform plumbing
+  (Linux/Win/macOS/FreeBSD), the Flatpak/Windows/macOS installers,
+  the AUR/Homebrew/copr packages, and the upstream web UI.
+- **SolarFlare** adds: Zen microarchitecture auto-detection +
+  CachyOS native build flags, the 5 Linux-only fork tunables
+  (`busy_poll_us`, `rate_cap_pct`, `enet_4mib_buffer`,
+  `pipewire_latency_ms`, `cpu_pinning`), the multi-distro build
+  script (`scripts/cachyos-build.sh`), the SolarFlare web UI rebrand
+  (logo, navbar wordmark, "SolarFlare" theme, fork footer pointing
+  at `vindeckyy/Solar-Flare`), and the fork-specific docs (PORTING,
+  CONFIGURATION, CHANGELOG-SolarFlare, CONTRIBUTING).
 
 ## See also
 
-- `docs/PORTING.md`
-- `docs/CONFIGURATION.md`
-- `scripts/cachyos-build.sh`
-- [LizardByte/Sunshine README](https://github.com/LizardByte/Sunshine)
+- `docs/PORTING.md` — multi-distro build instructions
+- `docs/CONFIGURATION.md` — fork-specific config keys
+- `docs/CHANGELOG-SolarFlare.md` — fork changelog
+- `CONTRIBUTING.md` — fork contribution policy
+- `.github/workflows/ci-solarflare.yml` — fork-specific CI
+- `scripts/cachyos-build.sh` — one-shot build script
+- `cachyos-fastpath.patch` — the original 7-file latency-tuning patch
+- [LizardByte/Sunshine README](https://github.com/LizardByte/Sunshine) — upstream
