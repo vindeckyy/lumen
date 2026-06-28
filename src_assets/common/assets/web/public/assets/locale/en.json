@@ -634,7 +634,18 @@
     "connecting": "Connecting…",
     "connected": "Live",
     "paused": "Paused",
-    "error": "Lost connection"
+    "error": "Lost connection",
+    "quick_tune": "Quick Tune",
+    "perf_active": "Revert perf prep",
+    "perf_detail": "Performance prep result",
+    "allm_on": "TV Game Mode",
+    "allm_off": "TV off game mode",
+    "no_gpu": "no GPU detected",
+    "display": "display",
+    "recommended": "recommended",
+    "input_to_photon": "input → photon",
+    "latency_budget": "Latency budget",
+    "budget_subtitle": "frame budget {frame}ms / server side {budget}ms"
   },
   "sf_clients": {
     "title": "Connected Clients",

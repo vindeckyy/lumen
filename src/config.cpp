@@ -621,6 +621,8 @@ namespace config {
     true,  // health_monitor_enabled
     true,  // session_recorder_enabled
     true,  // app_profiler_enabled
+    true,  // inspector_enabled
+    true,  // performance_enabled
     1000,  // adaptive_floor_kbps
     150000,  // adaptive_ceiling_kbps
     2000,  // adaptive_step_kbps

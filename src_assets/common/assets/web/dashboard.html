@@ -16,11 +16,39 @@
       <div class="d-flex align-items-center gap-2">
         <span class="solarflare-status-dot" :class="connClass"></span>
         <span class="text-body-secondary small">{{ connText }}</span>
+        <button class="btn btn-sm btn-warning" @click="quickTune" :disabled="perfBusy">
+          <zap v-if="!perfActive" :size="14" class="icon"></zap>
+          <check v-else :size="14" class="icon"></check>
+          {{ perfActive ? $t('dashboard.perf_active') : $t('dashboard.quick_tune') }}
+        </button>
+        <button class="btn btn-sm btn-outline-warning" @click="allmToggle" :disabled="allmBusy">
+          <tv v-if="allmState !== 'on'" :size="14" class="icon"></tv>
+          <tv-off v-else :size="14" class="icon"></tv-off>
+          {{ allmState === 'on' ? $t('dashboard.allm_off') : $t('dashboard.allm_on') }}
+        </button>
         <button class="btn btn-sm btn-outline-secondary" @click="pauseToggle">
           <pause v-if="!paused" :size="14" class="icon"></pause>
           <play v-else :size="14" class="icon"></play>
           {{ paused ? $t('dashboard.resume') : $t('dashboard.pause') }}
         </button>
+      </div>
+    </div>
+
+    <!-- Inspector card: what we detected about this host. -->
+    <div class="card solarflare-card my-3">
+      <div class="card-body py-2">
+        <div class="d-flex flex-wrap align-items-center gap-3 small">
+          <span><strong>{{ inspector.cpu.model || '?' }}</strong>
+            <span class="text-body-secondary">({{ inspector.cpu.microarch || 'generic' }})</span>
+          </span>
+          <span class="text-body-secondary">·</span>
+          <span v-if="inspector.gpu.name">{{ inspector.gpu.name }} <span class="text-body-secondary">({{ inspector.gpu.video_api }})</span></span>
+          <span v-else class="text-body-secondary">{{ $t('dashboard.no_gpu') }}</span>
+          <span class="text-body-secondary">·</span>
+          <span>{{ $t('dashboard.display') }} {{ displayServerName }}</span>
+          <span class="text-body-secondary">·</span>
+          <span class="text-warning">{{ $t('dashboard.recommended') }} {{ inspector.recommended.encoder }} / {{ inspector.recommended.codec }} → {{ inspector.recommended.preset }}</span>
+        </div>
       </div>
     </div>
 
@@ -38,9 +66,37 @@
             </p>
           </div>
           <div class="text-end">
-            <div class="h3 mb-0 text-warning">{{ snap.fps_ewma.toFixed(1) }}</div>
-            <div class="small text-body-secondary">FPS EWMA</div>
+            <div class="display-5 mb-0" :class="endToEndClass">{{ (endToEndMs()).toFixed(1) }} <small class="text-body-secondary">ms</small></div>
+            <div class="small text-body-secondary">{{ $t('dashboard.input_to_photon') }}</div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Latency budget bar -->
+    <div class="card solarflare-card my-3" v-if="budget.end_to_end_us">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-baseline mb-2">
+          <h5 class="card-title mb-0">{{ $t('dashboard.latency_budget') }}</h5>
+          <span class="small text-body-secondary">{{ $t('dashboard.budget_subtitle', { frame: (budget.frame_budget_us/1000).toFixed(1), budget: (budget.server.total_us/1000).toFixed(1) }) }}</span>
+        </div>
+        <div class="d-flex" style="height: 28px; border-radius: 6px; overflow: hidden; background: var(--color-border, rgba(0,0,0,0.05));">
+          <div :style="{ width: pct(budget.server.capture_us) + '%' }" class="bg-info" :title="'capture ' + budget.server.capture_us + 'us'"></div>
+          <div :style="{ width: pct(budget.server.color_convert_us) + '%' }" class="bg-info bg-opacity-75" :title="'color ' + budget.server.color_convert_us + 'us'"></div>
+          <div :style="{ width: pct(budget.server.encode_us) + '%' }" class="bg-warning" :title="'encode ' + budget.server.encode_us + 'us'"></div>
+          <div :style="{ width: pct(budget.server.pacer_us) + '%' }" class="bg-secondary" :title="'pacer ' + budget.server.pacer_us + 'us'"></div>
+          <div :style="{ width: pct(budget.server.send_us) + '%' }" class="bg-primary" :title="'send ' + budget.server.send_us + 'us'"></div>
+          <div :style="{ width: pct(budget.client.network_one_way_us) + '%' }" class="bg-danger" :title="'net ' + budget.client.network_one_way_us + 'us'"></div>
+          <div :style="{ width: pct(budget.client.decode_us) + '%' }" class="bg-dark bg-opacity-50" :title="'decode ' + budget.client.decode_us + 'us'"></div>
+          <div :style="{ width: pct(budget.client.display_us) + '%' }" class="bg-dark" :title="'display ' + budget.client.display_us + 'us'"></div>
+        </div>
+        <div class="d-flex flex-wrap gap-3 mt-2 small">
+          <span><span class="badge bg-info">&nbsp;</span> capture {{ (budget.server.capture_us/1000).toFixed(1) }}ms</span>
+          <span><span class="badge bg-warning">&nbsp;</span> encode {{ (budget.server.encode_us/1000).toFixed(1) }}ms</span>
+          <span><span class="badge bg-secondary">&nbsp;</span> pacer {{ (budget.server.pacer_us/1000).toFixed(1) }}ms</span>
+          <span><span class="badge bg-primary">&nbsp;</span> send {{ (budget.server.send_us/1000).toFixed(1) }}ms</span>
+          <span><span class="badge bg-danger">&nbsp;</span> network {{ (budget.client.network_one_way_us/1000).toFixed(1) }}ms</span>
+          <span><span class="badge bg-dark">&nbsp;</span> decode+display {{ ((budget.client.decode_us+budget.client.display_us)/1000).toFixed(1) }}ms</span>
         </div>
       </div>
     </div>
@@ -127,6 +183,18 @@
         </div>
       </div>
     </div>
+
+    <!-- Quick Tune result panel -->
+    <div v-if="perfDetail.length" class="card solarflare-card my-3">
+      <div class="card-body">
+        <h6 class="card-title">{{ $t('dashboard.perf_detail') }}</h6>
+        <ul class="mb-0 small">
+          <li v-for="s in perfDetail" :key="s.name">
+            <strong>{{ s.name }}</strong>: {{ s.detail }}
+          </li>
+        </ul>
+      </div>
+    </div>
   </div>
 </body>
 
@@ -134,10 +202,12 @@
   import { createApp } from 'vue'
   import Navbar from './Navbar.vue'
   import { initApp } from './init'
-  import { Pause, Play, MonitorPlay } from '@lucide/vue'
+  import { Check, MonitorPlay, Pause, Play, Tv, TvOff, Zap } from '@lucide/vue'
+
+  const DS_NAMES = ['unknown', 'wayland', 'x11', 'kms', 'headless']
 
   const app = createApp({
-    components: { Navbar, Pause, Play, MonitorPlay },
+    components: { Navbar, Check, MonitorPlay, Pause, Play, Tv, TvOff, Zap },
     data() {
       return {
         snap: {
@@ -145,8 +215,15 @@
           fps_ewma: 0, kbps_ewma: 0,
           latency: [], session: { active: false, client_name: '', client_app: '', width: 0, height: 0, fps: 0, bitrate_kbps: 0 }
         },
+        budget: { server: { capture_us: 0, color_convert_us: 0, encode_us: 0, pacer_us: 0, send_us: 0, total_us: 0 }, client: { network_one_way_us: 0, decode_us: 0, display_us: 0, total_us: 0 }, end_to_end_us: 0, frame_budget_us: 16667, fits_in_budget: true },
+        inspector: { cpu: { model: '', microarch: '' }, gpu: { name: '', video_api: '' }, recommended: { encoder: '', codec: '', preset: '' } },
         connState: 'connecting',
         paused: false,
+        perfActive: false,
+        perfDetail: [],
+        perfBusy: false,
+        allmState: 'unknown',
+        allmBusy: false,
         pollTimer: null,
         kbpsHistory: [],
         fpsHistory: [],
@@ -177,17 +254,23 @@
           return `${x},${y}`
         }).join(' ')
       },
+      displayServerName() { return DS_NAMES[this.inspector.display_server] || 'unknown' },
       connClass() {
         return { ok: 'solarflare-status-ok', warn: 'solarflare-status-warn', err: 'solarflare-status-error', connecting: 'solarflare-status-unknown' }[this.connState]
       },
       connText() {
         return { ok: this.$t('dashboard.connected'), warn: this.$t('dashboard.paused'), err: this.$t('dashboard.error'), connecting: this.$t('dashboard.connecting') }[this.connState]
+      },
+      endToEndClass() {
+        const ms = this.endToEndMs()
+        if (ms < 30) return 'text-success'
+        if (ms < 60) return 'text-info'
+        if (ms < 100) return 'text-warning'
+        return 'text-danger'
       }
     },
     methods: {
-      formatNumber(n) {
-        return new Intl.NumberFormat().format(n || 0)
-      },
+      formatNumber(n) { return new Intl.NumberFormat().format(n || 0) },
       formatBytes(n) {
         if (!n) return '0 B'
         const units = ['B', 'KB', 'MB', 'GB', 'TB']
@@ -195,6 +278,11 @@
         while (v >= 1024 && i < units.length - 1) { v /= 1024; ++i }
         return `${v.toFixed(1)} ${units[i]}`
       },
+      pct(us) {
+        const max = Math.max(this.budget.end_to_end_us, 1)
+        return Math.max(0, Math.min(100, us / max * 100))
+      },
+      endToEndMs() { return this.budget.end_to_end_us / 1000 },
       async poll() {
         if (this.paused) return
         try {
@@ -206,20 +294,55 @@
           this.fpsHistory.push(this.snap.fps_ewma)
           if (this.kbpsHistory.length > this.maxHistory) this.kbpsHistory.shift()
           if (this.fpsHistory.length > this.maxHistory) this.fpsHistory.shift()
-        } catch (e) {
-          console.error(e)
-          this.connState = 'err'
-        }
+        } catch (e) { console.error(e); this.connState = 'err' }
+        try {
+          const b = await fetch('./api/solarflare/latency-budget')
+          if (b.ok) {
+            const j = await b.json()
+            this.budget = j.budget
+          }
+        } catch (e) {}
       },
-      pauseToggle() { this.paused = !this.paused }
+      async loadInspector() {
+        try {
+          const r = await fetch('./api/solarflare/inspector')
+          const j = await r.json()
+          this.inspector = j.report || this.inspector
+          this.inspector.display_server = j.report?.display_server ?? 0
+        } catch (e) { console.error(e) }
+      },
+      pauseToggle() { this.paused = !this.paused },
+      async quickTune() {
+        this.perfBusy = true
+        try {
+          if (this.perfActive) {
+            await fetch('./api/solarflare/performance/revert', { method: 'POST' })
+            this.perfActive = false
+            this.perfDetail = []
+          } else {
+            const r = await fetch('./api/solarflare/performance/apply', { method: 'POST' })
+            const j = await r.json()
+            this.perfActive = !!j.active
+            this.perfDetail = j.steps || []
+          }
+        } finally { this.perfBusy = false }
+      },
+      async allmToggle() {
+        this.allmBusy = true
+        try {
+          const path = this.allmState === 'on' ? './api/solarflare/allm/off' : './api/solarflare/allm/on'
+          const r = await fetch(path, { method: 'POST' })
+          const j = await r.json()
+          this.allmState = j.state === 2 ? 'on' : (j.state === 3 ? 'off' : 'unknown')
+        } finally { this.allmBusy = false }
+      }
     },
     mounted() {
       this.poll()
+      this.loadInspector()
       this.pollTimer = setInterval(this.poll, 500)
     },
-    beforeUnmount() {
-      if (this.pollTimer) clearInterval(this.pollTimer)
-    }
+    beforeUnmount() { if (this.pollTimer) clearInterval(this.pollTimer) }
   })
 
   initApp(app)

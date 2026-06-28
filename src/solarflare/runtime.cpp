@@ -17,7 +17,9 @@
 #include "solarflare/adaptive_bitrate.h"
 #include "solarflare/app_profiler.h"
 #include "solarflare/health_monitor.h"
+#include "solarflare/inspector.h"
 #include "solarflare/network_probe.h"
+#include "solarflare/performance.h"
 #include "solarflare/platform/runtime_config.h"
 #include "solarflare/runtime.h"
 #include "solarflare/session_recorder.h"
@@ -34,11 +36,14 @@ namespace solarflare {
       network_probe::init();
       session_recorder::init(platform::make_session_recorder_config());
       app_profiler::init(platform::make_app_profiler_config());
+      inspector::init();
+      performance::init(perf_cfg_t {});
       BOOST_LOG(info) << "SolarFlare runtime: up";
       return true;
     }
 
     void shutdown() {
+      performance::shutdown();
       app_profiler::shutdown();
       session_recorder::shutdown();
       network_probe::shutdown();

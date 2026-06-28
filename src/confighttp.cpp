@@ -43,10 +43,14 @@
 #include "process.h"
 #include "rtsp.h"
 #include "solarflare/adaptive_bitrate.h"
+#include "solarflare/allm.h"
 #include "solarflare/app_profiler.h"
 #include "solarflare/codec_presets.h"
 #include "solarflare/health_monitor.h"
+#include "solarflare/inspector.h"
+#include "solarflare/latency_budget.h"
 #include "solarflare/network_probe.h"
+#include "solarflare/performance.h"
 #include "solarflare/session_recorder.h"
 #include "solarflare/telemetry.h"
 #include "utility.h"
@@ -2006,6 +2010,102 @@ namespace confighttp {
     send_response(response, out);
   }
 
+  /**
+   * @brief GET /api/solarflare/inspector
+   *
+   * One-shot host inspection: OS, CPU, GPU, display server, and a
+   * recommended capture mode + encoder + preset.
+   */
+  void sfGetInspector(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) return;
+    auto &r = solarflare::inspector::cached();
+    nlohmann::json out;
+    out["status"] = true;
+    out["report"] = solarflare::inspector::to_json(r);
+    send_response(response, out);
+  }
+
+  /**
+   * @brief GET /api/solarflare/latency-budget
+   *
+   * Per-stage latency split + fixed-overhead estimates for the
+   * client-side decode+display path. The dashboard renders this
+   * as a stacked bar showing where the frame budget is going.
+   */
+  void sfGetLatencyBudget(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) return;
+    auto snap = solarflare::telemetry::snapshot();
+    auto b = solarflare::latency_budget::from_snapshot(snap);
+    nlohmann::json out;
+    out["status"] = true;
+    out["budget"] = solarflare::latency_budget::to_json(b);
+    send_response(response, out);
+  }
+
+  /**
+   * @brief POST /api/solarflare/performance/apply
+   *
+   * Apply the pre-stream performance prep (HID boost + GPU perf
+   * + inhibit + QoS). Returns the per-step result.
+   */
+  void sfApplyPerformance(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) return;
+    bool ok = solarflare::performance::apply();
+    auto s = solarflare::performance::snapshot();
+    nlohmann::json out;
+    out["status"] = ok;
+    out["active"] = s.active;
+    nlohmann::json steps = nlohmann::json::array();
+    for (auto &st : s.steps) {
+      steps.push_back({{"name", st.name}, {"applied", st.applied}, {"detail", st.detail}});
+    }
+    out["steps"] = steps;
+    send_response(response, out);
+  }
+
+  /**
+   * @brief POST /api/solarflare/performance/revert
+   */
+  void sfRevertPerformance(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) return;
+    solarflare::performance::revert();
+    auto s = solarflare::performance::snapshot();
+    nlohmann::json out;
+    out["status"] = true;
+    out["active"] = s.active;
+    send_response(response, out);
+  }
+
+  /**
+   * @brief POST /api/solarflare/allm/on
+   *
+   * Send CEC to the connected TV asking it to enter game mode.
+   */
+  void sfAllmOn(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) return;
+    bool ok = solarflare::allm::enable();
+    auto s = solarflare::allm::snapshot();
+    nlohmann::json out;
+    out["status"] = ok;
+    out["state"] = static_cast<int>(s.state);
+    out["detail"] = s.detail;
+    send_response(response, out);
+  }
+
+  /**
+   * @brief POST /api/solarflare/allm/off
+   */
+  void sfAllmOff(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) return;
+    bool ok = solarflare::allm::disable();
+    auto s = solarflare::allm::snapshot();
+    nlohmann::json out;
+    out["status"] = ok;
+    out["state"] = static_cast<int>(s.state);
+    out["detail"] = s.detail;
+    send_response(response, out);
+  }
+
   void start() {
     platf::set_thread_name("confighttp");
     const auto shutdown_event = mail::man->event<bool>(mail::shutdown);
@@ -2099,6 +2199,12 @@ namespace confighttp {
     server.resource["^/api/solarflare/codec-presets$"]["GET"] = sfGetCodecPresets;
     server.resource["^/api/solarflare/clients$"]["GET"] = sfGetClients;
     server.resource["^/api/solarflare/clients/disconnect-all$"]["POST"] = sfDisconnectAll;
+    server.resource["^/api/solarflare/inspector$"]["GET"] = sfGetInspector;
+    server.resource["^/api/solarflare/latency-budget$"]["GET"] = sfGetLatencyBudget;
+    server.resource["^/api/solarflare/performance/apply$"]["POST"] = sfApplyPerformance;
+    server.resource["^/api/solarflare/performance/revert$"]["POST"] = sfRevertPerformance;
+    server.resource["^/api/solarflare/allm/on$"]["POST"] = sfAllmOn;
+    server.resource["^/api/solarflare/allm/off$"]["POST"] = sfAllmOff;
 
     // SolarFlare web pages.
     server.resource["^/dashboard/?$"]["GET"] = page_handler("dashboard.html");

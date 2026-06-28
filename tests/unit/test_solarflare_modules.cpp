@@ -3,14 +3,15 @@
  * @brief One runnable check per SolarFlare subsystem.
  *
  * ponytail: non-trivial logic gets one assertion that fails if the
- * logic breaks. No fixtures, no parameterised suites, no edge-case
- * matrix -- those are YAGNI until something regresses.
+ * logic breaks. No fixtures, no per-edge-case matrix -- those are
+ * YAGNI until something regresses.
  */
 #include "../tests_common.h"
 
 // local includes
 #include "solarflare/adaptive_bitrate.h"
 #include "solarflare/app_profiler.h"
+#include "solarflare/codec_presets.h"
 #include "solarflare/network_probe.h"
 #include "solarflare/runtime.h"
 #include "solarflare/session_recorder.h"
@@ -33,6 +34,21 @@ namespace {
   }
 
   // -------------------------------------------------------------------
+  // Telemetry observer: fires synchronously on record_latency.
+  // -------------------------------------------------------------------
+  TEST(TelemetryObserver, FiresOnRecord) {
+    ASSERT_TRUE(solarflare::telemetry::init());
+    int calls = 0;
+    solarflare::telemetry::set_observer([&](const solarflare::snapshot_t &) { ++calls; });
+    solarflare::telemetry::record_latency(solarflare::STAGE_SEND, 100);
+    EXPECT_EQ(calls, 1);
+    solarflare::telemetry::set_observer(nullptr);
+    solarflare::telemetry::record_latency(solarflare::STAGE_SEND, 100);
+    EXPECT_EQ(calls, 1);  // observer cleared, no extra call
+    solarflare::telemetry::shutdown();
+  }
+
+  // -------------------------------------------------------------------
   // Network probe: score formula boundary at the formula's design
   // point (rtt=30, jitter=5, loss=0 should give a perfect score).
   // -------------------------------------------------------------------
@@ -51,9 +67,9 @@ namespace {
   // -------------------------------------------------------------------
   TEST(AdaptiveBitrateLifecycle, InitShutdownRoundTrip) {
     solarflare::adaptive_cfg_t c;
-    c.enabled = false;  // don't actually subscribe; keeps the test fast
+    c.enabled = false;  // skip the telemetry observer install
     EXPECT_TRUE(solarflare::adaptive_bitrate::init(c));
-    EXPECT_FALSE(solarflare::adaptive_bitrate::snapshot().running == false);
+    EXPECT_TRUE(solarflare::adaptive_bitrate::snapshot().running);
     solarflare::adaptive_bitrate::shutdown();
   }
 
@@ -117,6 +133,122 @@ namespace {
 
     solarflare::app_profiler::shutdown();
     std::filesystem::remove(cfg.profiles_path);
+  }
+
+  // -------------------------------------------------------------------
+  // Codec presets: every preset has the required fields, encoder is
+  // one of the known set.
+  // -------------------------------------------------------------------
+  TEST(CodecPresets, AllHaveNameEncoderCodec) {
+    auto presets = solarflare::codec_presets::all_presets();
+    ASSERT_FALSE(presets.empty());
+    for (auto &p : presets) {
+      EXPECT_FALSE(p.name.empty()) << "preset missing name";
+      EXPECT_FALSE(p.encoder.empty()) << p.name << " missing encoder";
+      EXPECT_FALSE(p.codec.empty()) << p.name << " missing codec";
+      EXPECT_FALSE(p.kv.empty()) << p.name << " has no settings";
+    }
+  }
+
+  TEST(CodecPresets, FindByName) {
+    auto *p = solarflare::codec_presets::find("NVENC Low Latency 1080p60");
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(p->encoder, "nvenc");
+    EXPECT_EQ(p->codec, "h264");
+  }
+
+  TEST(CodecPresets, FiltersByEncoder) {
+    auto nvenc = solarflare::codec_presets::presets_for_encoder("nvenc");
+    EXPECT_GE(nvenc.size(), 4u);
+    for (auto &p : nvenc) EXPECT_EQ(p.encoder, "nvenc");
+  }
+
+  TEST(CodecPresets, JsonShape) {
+    auto j = solarflare::codec_presets::all_presets_json();
+    ASSERT_TRUE(j.is_array());
+    ASSERT_GE(j.size(), 1u);
+    auto &first = j[0];
+    EXPECT_TRUE(first.contains("name"));
+    EXPECT_TRUE(first.contains("encoder"));
+    EXPECT_TRUE(first.contains("codec"));
+    EXPECT_TRUE(first.contains("kv"));
+  }
+
+  // -------------------------------------------------------------------
+  // Health monitor: lifecycle + the no-platforms-available samplers
+  // don't crash. ponytail: we don't test actual CPU numbers -- they
+  // vary by host -- only that the calls are safe.
+  // -------------------------------------------------------------------
+  TEST(HealthMonitorLifecycle, SamplersAreSafe) {
+    (void) solarflare::health_monitor::sample_cpu_pct();
+    (void) solarflare::health_monitor::sample_mem_mib();
+    (void) solarflare::health_monitor::sample_thermal_c();
+    (void) solarflare::health_monitor::sample_disk_free_mib();
+    (void) solarflare::health_monitor::sample_disk_total_mib();
+    SUCCEED();
+  }
+
+  // -------------------------------------------------------------------
+  // Inspector: probe returns a populated report + JSON shape.
+  // -------------------------------------------------------------------
+  TEST(InspectorLifecycle, ProbeReturnsReport) {
+    auto r = solarflare::inspector::probe();
+    // OS name should be non-empty on every supported platform.
+    EXPECT_FALSE(r.os_name.empty());
+    // Recommended codec should be one of the three.
+    EXPECT_TRUE(r.recommended_codec == "h264" || r.recommended_codec == "hevc" || r.recommended_codec == "av1");
+  }
+
+  TEST(InspectorJson, Shape) {
+    auto r = solarflare::inspector::probe();
+    auto j = solarflare::inspector::to_json(r);
+    EXPECT_TRUE(j.contains("os"));
+    EXPECT_TRUE(j.contains("cpu"));
+    EXPECT_TRUE(j.contains("gpu"));
+    EXPECT_TRUE(j.contains("recommended"));
+    EXPECT_TRUE(j.contains("warnings"));
+  }
+
+  // -------------------------------------------------------------------
+  // Latency budget: from_snapshot produces a sane split.
+  // -------------------------------------------------------------------
+  TEST(LatencyBudget, FromSnapshot) {
+    solarflare::snapshot_t s;
+    s.latency[solarflare::STAGE_ENCODE].submit(2000);
+    s.latency[solarflare::STAGE_SEND].submit(1000);
+    s.latency[solarflare::STAGE_NETWORK_RTT].submit(20000);
+    s.session.active = true;
+    s.session.fps = 60;
+    auto b = solarflare::latency_budget::from_snapshot(s, 4000, 8000);
+    EXPECT_EQ(b.encode_us, 2000u);
+    EXPECT_EQ(b.send_us, 1000u);
+    EXPECT_EQ(b.network_rtt_us, 20000u);
+    EXPECT_EQ(b.frame_budget_us, 16667u);  // 1_000_000 / 60
+    EXPECT_TRUE(b.fits_in_budget());
+    EXPECT_EQ(b.client_total_us(), 10000u + 4000u + 8000u);  // half rtt + decode + display
+  }
+
+  // -------------------------------------------------------------------
+  // Performance prep: lifecycle doesn't crash; apply/revert idempotent.
+  // -------------------------------------------------------------------
+  TEST(PerformanceLifecycle, ApplyRevertIdempotent) {
+    solarflare::perf_cfg_t c;
+    solarflare::performance::init(c);
+    EXPECT_TRUE(solarflare::performance::apply());
+    EXPECT_TRUE(solarflare::performance::snapshot().active);
+    EXPECT_TRUE(solarflare::performance::apply());  // second call = no-op
+    solarflare::performance::revert();
+    EXPECT_FALSE(solarflare::performance::snapshot().active);
+    solarflare::performance::shutdown();
+  }
+
+  // -------------------------------------------------------------------
+  // Runtime: init + shutdown all subsystems.
+  // -------------------------------------------------------------------
+  TEST(RuntimeLifecycle, FullCycle) {
+    EXPECT_TRUE(solarflare::runtime::init());
+    solarflare::runtime::shutdown();
+    SUCCEED();
   }
 
 }  // namespace

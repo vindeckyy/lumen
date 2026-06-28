@@ -350,6 +350,12 @@ namespace config {
     // Master enable for the per-application profile manager.
     bool app_profiler_enabled = true;
 
+    // Master enable for the system inspector.
+    bool inspector_enabled = true;
+
+    // Master enable for the pre-stream performance prep.
+    bool performance_enabled = true;
+
     // Adaptive bitrate: floor in kbps. Never go below.
     int adaptive_floor_kbps = 1000;
 
