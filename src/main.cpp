@@ -23,6 +23,7 @@
 #include "main.h"
 #include "nvhttp.h"
 #include "process.h"
+#include "solarflare/cli.h"
 #include "solarflare/runtime.h"
 #include "system_tray.h"
 #include "upnp.h"
@@ -62,6 +63,9 @@ std::map<std::string_view, std::function<int(const char *name, int argc, char **
      return args::restore_nvprefs_undo();
    }},
 #endif
+  {"solarctl"sv, [](const char *name, int argc, char **argv) {
+     return solarflare::cli::run(name, argc, argv);
+   }},
 };
 
 #ifdef _WIN32

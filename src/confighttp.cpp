@@ -42,6 +42,13 @@
 #include "platform/common.h"
 #include "process.h"
 #include "rtsp.h"
+#include "solarflare/adaptive_bitrate.h"
+#include "solarflare/app_profiler.h"
+#include "solarflare/codec_presets.h"
+#include "solarflare/health_monitor.h"
+#include "solarflare/network_probe.h"
+#include "solarflare/session_recorder.h"
+#include "solarflare/telemetry.h"
 #include "utility.h"
 #include "uuid.h"
 
@@ -1721,6 +1728,284 @@ namespace confighttp {
     }
   }
 
+  // =====================================================================
+  // SolarFlare fork API
+  //
+  // Read-mostly endpoints that surface the SolarFlare subsystems to the
+  // web UI (Dashboard, Clients, Profiles, Sessions, Health, Network).
+  // ponytail: every endpoint is the minimum JSON shape that the
+  // corresponding Vue page needs; no schema, no OpenAPI doc, no
+  // version negotiation -- the UI and the C++ ship together.
+  // =====================================================================
+
+  /**
+   * @brief GET /api/solarflare/telemetry
+   *
+   * Single-shot snapshot of the telemetry engine. The web UI polls
+   * this at ~2 Hz; that is cheaper than the SSE/WebSocket dance and
+   * works with Simple-Web-Server's chunked response handler.
+   */
+  void sfGetTelemetry(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) return;
+    auto snap = solarflare::telemetry::snapshot();
+    nlohmann::json out;
+    out["status"] = true;
+    out["revision"] = snap.revision;
+    out["captured_at"] = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            snap.captured_at.time_since_epoch()).count();
+    out["frames"] = snap.frames;
+    out["bytes_sent"] = snap.bytes_sent;
+    out["packets_lost"] = snap.packets_lost;
+    out["fps_ewma"] = snap.fps_ewma;
+    out["kbps_ewma"] = snap.kbps_ewma;
+    nlohmann::json latency = nlohmann::json::array();
+    for (std::size_t i = 0; i < solarflare::stage_count; ++i) {
+      latency.push_back({
+        {"stage", solarflare::stage_name(static_cast<solarflare::pipeline_stage>(i))},
+        {"min_us", snap.latency[i].min_us},
+        {"max_us", snap.latency[i].max_us},
+        {"avg_us", snap.latency[i].avg_us},
+        {"n", snap.latency[i].n}
+      });
+    }
+    out["latency"] = latency;
+    auto &s = snap.session;
+    out["session"] = {
+      {"active", s.active},
+      {"client_name", s.client_name},
+      {"client_app", s.client_app},
+      {"fps", s.fps},
+      {"width", s.width},
+      {"height", s.height},
+      {"bitrate_kbps", s.bitrate_kbps}
+    };
+    send_response(response, out);
+  }
+
+  /**
+   * @brief GET /api/solarflare/adaptive
+   */
+  void sfGetAdaptive(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) return;
+    auto s = solarflare::adaptive_bitrate::snapshot();
+    nlohmann::json out;
+    out["status"] = true;
+    out["running"] = s.running;
+    out["current_kbps"] = s.current_kbps;
+    out["increases"] = s.increases;
+    out["decreases"] = s.decreases;
+    send_response(response, out);
+  }
+
+  /**
+   * @brief GET /api/solarflare/health
+   */
+  void sfGetHealth(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) return;
+    auto h = solarflare::health_monitor::snapshot();
+    nlohmann::json out;
+    out["status"] = true;
+    nlohmann::json resources = nlohmann::json::array();
+    for (auto &r : h.resources) {
+      resources.push_back({{"name", r.name}, {"value", r.value}});
+    }
+    out["resources"] = resources;
+    nlohmann::json alerts = nlohmann::json::array();
+    for (auto &a : h.recent_alerts) {
+      alerts.push_back({
+        {"at", std::chrono::duration_cast<std::chrono::seconds>(a.at.time_since_epoch()).count()},
+        {"severity", static_cast<int>(a.severity)},
+        {"resource", a.resource},
+        {"message", a.message},
+        {"value", a.value},
+        {"threshold", a.threshold}
+      });
+    }
+    out["alerts"] = alerts;
+    send_response(response, out);
+  }
+
+  /**
+   * @brief GET /api/solarflare/network
+   */
+  void sfGetNetwork(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) return;
+    auto s = solarflare::network_probe::snapshot();
+    nlohmann::json out;
+    out["status"] = true;
+    out["aggregate_score"] = s.aggregate_score;
+    nlohmann::json targets = nlohmann::json::array();
+    for (auto &t : s.targets) {
+      targets.push_back({
+        {"name", t.name},
+        {"rtt_p95_ms", t.rtt_p95_ms},
+        {"jitter_ms", t.jitter_ms},
+        {"loss_pct", t.loss_pct},
+        {"kbps", t.kbps},
+        {"score", t.score}
+      });
+    }
+    out["targets"] = targets;
+    send_response(response, out);
+  }
+
+  /**
+   * @brief GET /api/solarflare/sessions?limit=N
+   */
+  void sfGetSessions(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) return;
+    auto q = request->parse_query_string();
+    std::size_t limit = 20;
+    if (auto it = q.find("limit"); it != q.end()) {
+      try { limit = static_cast<std::size_t>(std::stoul(it->second)); } catch (...) {}
+    }
+    auto records = solarflare::session_recorder::list(limit);
+    nlohmann::json out;
+    out["status"] = true;
+    out["recording"] = solarflare::session_recorder::is_recording();
+    nlohmann::json arr = nlohmann::json::array();
+    for (auto &r : records) {
+      arr.push_back({
+        {"id", r.id},
+        {"started_at", std::chrono::duration_cast<std::chrono::seconds>(r.started_at.time_since_epoch()).count()},
+        {"ended_at", std::chrono::duration_cast<std::chrono::seconds>(r.ended_at.time_since_epoch()).count()},
+        {"duration_s", r.duration_seconds()},
+        {"client_name", r.client_name},
+        {"client_app", r.client_app},
+        {"fps", r.fps},
+        {"width", r.width},
+        {"height", r.height},
+        {"bitrate_kbps", r.bitrate_kbps},
+        {"frames", r.frames},
+        {"bytes_sent", r.bytes_sent},
+        {"packets_lost", r.packets_lost},
+        {"avg_fps", r.avg_fps},
+        {"avg_kbps", r.avg_kbps}
+      });
+    }
+    out["sessions"] = arr;
+    send_response(response, out);
+  }
+
+  /**
+   * @brief DELETE /api/solarflare/sessions/{id}
+   */
+  void sfDeleteSession(const resp_https_t &response, const req_https_t &request, const std::string &id) {
+    if (!authenticate(response, request)) return;
+    nlohmann::json out;
+    out["status"] = solarflare::session_recorder::remove(id);
+    send_response(response, out);
+  }
+
+  /**
+   * @brief GET /api/solarflare/profiles
+   */
+  void sfGetProfiles(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) return;
+    auto list = solarflare::app_profiler::list();
+    nlohmann::json out;
+    out["status"] = true;
+    out["active"] = solarflare::app_profiler::active_profile_name().value_or("");
+    nlohmann::json arr = nlohmann::json::array();
+    for (auto &p : list) {
+      nlohmann::json j;
+      j["name"] = p.name;
+      j["match"] = p.match;
+      j["priority"] = p.priority;
+      j["enabled"] = p.enabled;
+      if (p.fps) j["fps"] = *p.fps;
+      if (p.width) j["width"] = *p.width;
+      if (p.height) j["height"] = *p.height;
+      if (p.bitrate_kbps) j["bitrate_kbps"] = *p.bitrate_kbps;
+      if (p.encoder) j["encoder"] = *p.encoder;
+      if (p.codec) j["codec"] = *p.codec;
+      arr.push_back(j);
+    }
+    out["profiles"] = arr;
+    send_response(response, out);
+  }
+
+  /**
+   * @brief POST /api/solarflare/profiles
+   */
+  void sfUpsertProfile(const resp_https_t &response, const req_https_t &request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request)) return;
+    try {
+      std::stringstream ss;
+      ss << request->content.rdbuf();
+      auto j = nlohmann::json::parse(ss.str());
+      solarflare::app_profile_t p;
+      p.name = j.value("name", "");
+      p.match = j.value("match", "");
+      p.priority = j.value("priority", 100);
+      p.enabled = j.value("enabled", true);
+      if (j.contains("fps") && j["fps"].is_number()) p.fps = j["fps"].get<std::uint32_t>();
+      if (j.contains("width") && j["width"].is_number()) p.width = j["width"].get<std::uint32_t>();
+      if (j.contains("height") && j["height"].is_number()) p.height = j["height"].get<std::uint32_t>();
+      if (j.contains("bitrate_kbps") && j["bitrate_kbps"].is_number()) p.bitrate_kbps = j["bitrate_kbps"].get<std::uint32_t>();
+      if (j.contains("encoder")) p.encoder = j["encoder"].get<std::string>();
+      if (j.contains("codec")) p.codec = j["codec"].get<std::string>();
+      solarflare::app_profiler::upsert(p);
+      solarflare::app_profiler::save();
+      nlohmann::json out;
+      out["status"] = true;
+      send_response(response, out);
+    } catch (const std::exception &e) {
+      bad_request(response, request, e.what());
+    }
+  }
+
+  /**
+   * @brief DELETE /api/solarflare/profiles/{name}
+   */
+  void sfDeleteProfile(const resp_https_t &response, const req_https_t &request, const std::string &name) {
+    if (!authenticate(response, request)) return;
+    nlohmann::json out;
+    out["status"] = solarflare::app_profiler::remove(name);
+    solarflare::app_profiler::save();
+    send_response(response, out);
+  }
+
+  /**
+   * @brief GET /api/solarflare/codec-presets
+   */
+  void sfGetCodecPresets(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) return;
+    nlohmann::json out;
+    out["status"] = true;
+    out["presets"] = solarflare::codec_presets::all_presets_json();
+    send_response(response, out);
+  }
+
+  /**
+   * @brief GET /api/solarflare/clients
+   *
+   * Combined view: paired clients (from nvhttp) + active sessions
+   * (from rtsp).
+   */
+  void sfGetClients(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) return;
+    auto paired = nvhttp::get_all_clients();
+    nlohmann::json out;
+    out["status"] = true;
+    out["active_sessions"] = rtsp_stream::session_count();
+    out["paired"] = paired;
+    send_response(response, out);
+  }
+
+  /**
+   * @brief POST /api/solarflare/clients/disconnect-all
+   */
+  void sfDisconnectAll(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) return;
+    rtsp_stream::terminate_sessions();
+    nlohmann::json out;
+    out["status"] = true;
+    out["active_sessions"] = rtsp_stream::session_count();
+    send_response(response, out);
+  }
+
   void start() {
     platf::set_thread_name("confighttp");
     const auto shutdown_event = mail::man->event<bool>(mail::shutdown);
@@ -1787,6 +2072,42 @@ namespace confighttp {
     server.resource["^/api/restart$"]["POST"] = restart;
     server.resource["^/api/vigembus/status$"]["GET"] = getViGEmBusStatus;
     server.resource["^/api/vigembus/install$"]["POST"] = installViGEmBus;
+
+    // SolarFlare fork API. The dashboard / clients / profiles /
+    // sessions / health / network / codec-presets pages all hit
+    // these. Authenticated the same way as the upstream routes.
+    server.resource["^/api/solarflare/telemetry$"]["GET"] = sfGetTelemetry;
+    server.resource["^/api/solarflare/adaptive$"]["GET"] = sfGetAdaptive;
+    server.resource["^/api/solarflare/health$"]["GET"] = sfGetHealth;
+    server.resource["^/api/solarflare/network$"]["GET"] = sfGetNetwork;
+    server.resource["^/api/solarflare/sessions$"]["GET"] = sfGetSessions;
+    server.resource["^/api/solarflare/sessions/([^/]+)$"]["DELETE"] =
+      [](resp_https_t response, req_https_t request) {
+        auto q = request->parse_query_string();
+        auto it = q.find("id");
+        sfDeleteSession(response, request, it != q.end() ? it->second : "");
+      };
+    server.resource["^/api/solarflare/profiles$"]["GET"] = sfGetProfiles;
+    server.resource["^/api/solarflare/profiles$"]["POST"] = sfUpsertProfile;
+    server.resource["^/api/solarflare/profiles/([^/]+)$"]["DELETE"] =
+      [](resp_https_t response, req_https_t request) {
+        auto &path = request->path;
+        auto slash = path.find_last_of('/');
+        std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+        sfDeleteProfile(response, request, name);
+      };
+    server.resource["^/api/solarflare/codec-presets$"]["GET"] = sfGetCodecPresets;
+    server.resource["^/api/solarflare/clients$"]["GET"] = sfGetClients;
+    server.resource["^/api/solarflare/clients/disconnect-all$"]["POST"] = sfDisconnectAll;
+
+    // SolarFlare web pages.
+    server.resource["^/dashboard/?$"]["GET"] = page_handler("dashboard.html");
+    server.resource["^/sf-clients/?$"]["GET"] = page_handler("sf-clients.html");
+    server.resource["^/profiles/?$"]["GET"] = page_handler("profiles.html");
+    server.resource["^/sessions/?$"]["GET"] = page_handler("sessions.html");
+    server.resource["^/sf-health/?$"]["GET"] = page_handler("sf-health.html");
+    server.resource["^/sf-network/?$"]["GET"] = page_handler("sf-network.html");
+    server.resource["^/wizard/?$"]["GET"] = page_handler("wizard.html", false, true);
 
     // static/dynamic resources
     server.resource["^/images/sunshine.ico$"]["GET"] = getFaviconImage;

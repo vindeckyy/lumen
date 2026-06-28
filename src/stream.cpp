@@ -34,6 +34,7 @@ extern "C" {
 #include "network.h"
 #include "platform/common.h"
 #include "process.h"
+#include "solarflare/telemetry.h"
 #include "stream.h"
 #include "sync.h"
 #include "system_tray.h"
@@ -1435,6 +1436,10 @@ namespace stream {
         uint16_t latency = duration_to_latency(std::chrono::steady_clock::now() - *packet->frame_timestamp);
         frame_header.frame_processing_latency = latency;
         frame_processing_latency_logger.collect_and_log(latency / 10.);
+        // ponytail: feed the SolarFlare telemetry engine. encode
+        // latency is the dominant CPU-side cost; capture happens in
+        // the display layer and is harder to instrument from here.
+        solarflare::telemetry::record_latency(solarflare::STAGE_ENCODE, latency * 100u);
       } else {
         frame_header.frame_processing_latency = 0;
       }
@@ -1666,6 +1671,21 @@ namespace stream {
                 }
               }
               frame_send_batch_latency_logger.second_point_now_and_log();
+              // ponytail: feed SolarFlare telemetry with the send-stage latency.
+              // Use the existing latency_logger's bracketed points via
+              // a separate wall-clock pair so we don't disturb logging.
+              {
+                static thread_local std::chrono::steady_clock::time_point send_t0 {};
+                thread_local bool send_have_t0 = false;
+                if (send_have_t0) {
+                  auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+                              std::chrono::steady_clock::now() - send_t0).count();
+                  solarflare::telemetry::record_latency(solarflare::STAGE_SEND, static_cast<std::uint32_t>(us));
+                }
+                send_t0 = std::chrono::steady_clock::now();
+                send_have_t0 = true;
+              }
+              solarflare::telemetry::record_send(static_cast<std::uint64_t>(current_batch_size) * blocksize, 0);
 
               ratecontrol_group_packets_sent += current_batch_size;
               ratecontrol_frame_packets_sent += current_batch_size;
