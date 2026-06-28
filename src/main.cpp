@@ -23,6 +23,7 @@
 #include "main.h"
 #include "nvhttp.h"
 #include "process.h"
+#include "solarflare/runtime.h"
 #include "system_tray.h"
 #include "upnp.h"
 #include "video.h"
@@ -373,6 +374,25 @@ int main(int argc, char *argv[]) {
     BOOST_LOG(error) << "Video failed to find working encoder"sv;
   }
 
+  // ----------------------------------------------------------------
+  // SolarFlare runtime subsystems (telemetry, adaptive bitrate,
+  // health monitor, session recorder, app profiler, live data).
+  // Initialised BEFORE the HTTP interface so the confighttp routes
+  // can talk to them. A failure here is logged but never fatal --
+  // the upstream Sunshine flow must still work if any one of the
+  // SolarFlare modules misbehaves.
+  // ----------------------------------------------------------------
+  {
+    bool telemetry_ok = config::solarflare.telemetry_enabled;
+    if (telemetry_ok) {
+      if (!solarflare::runtime::init()) {
+        BOOST_LOG(warning) << "SolarFlare runtime: init failed; continuing without SolarFlare subsystems"sv;
+      }
+    } else {
+      BOOST_LOG(info) << "SolarFlare runtime: telemetry_enabled=false; skipping subsystem init"sv;
+    }
+  }
+
   if (http::init()) {
     BOOST_LOG(fatal) << "HTTP interface failed to initialize"sv;
 
@@ -433,6 +453,9 @@ int main(int argc, char *argv[]) {
 
   task_pool.stop();
   task_pool.join();
+
+  // Tear down SolarFlare subsystems before the global destructors run.
+  solarflare::runtime::shutdown();
 
 #ifdef _WIN32
   // Restore global NVIDIA control panel settings

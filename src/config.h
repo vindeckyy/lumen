@@ -329,6 +329,70 @@ namespace config {
     // push onto SCHED_RR prio 10 and pin to a non-IRQ, non-SMT core.
     // Set false to fall back to upstream's nice-only behaviour.
     bool cpu_pinning = true;
+
+    // -- Round 2 (telemetry / adaptive / health / sessions) -----------
+
+    // Master enable for the SolarFlare telemetry engine. When false,
+    // all other SolarFlare subsystems are no-ops.
+    bool telemetry_enabled = true;
+
+    // Master enable for the adaptive bitrate controller. Disabling
+    // keeps telemetry running but stops bitrate adjustments.
+    bool adaptive_bitrate_enabled = true;
+
+    // Master enable for the health monitor.
+    bool health_monitor_enabled = true;
+
+    // Master enable for the session recorder. When false, no JSON
+    // files are written to <appdata>/solarflare/sessions/.
+    bool session_recorder_enabled = true;
+
+    // Master enable for the per-application profile manager.
+    bool app_profiler_enabled = true;
+
+    // Adaptive bitrate: floor in kbps. Never go below.
+    int adaptive_floor_kbps = 1000;
+
+    // Adaptive bitrate: ceiling in kbps. Never go above. Capped at the
+    // negotiated rate so we don't request more than the link allows.
+    int adaptive_ceiling_kbps = 150000;
+
+    // Adaptive bitrate: step size (kbps) for each adjustment.
+    int adaptive_step_kbps = 2000;
+
+    // Adaptive bitrate: minimum time between adjustments (ms).
+    int adaptive_cooldown_ms = 2000;
+
+    // Adaptive bitrate: packet-loss % threshold. Above this we drop
+    // the bitrate by one step.
+    double adaptive_loss_threshold_pct = 1.0;
+
+    // Adaptive bitrate: RTT p95 threshold (ms). Above this we drop.
+    double adaptive_rtt_threshold_ms = 80.0;
+
+    // Adaptive bitrate: RTT recovery threshold (ms). Below this AND
+    // low loss AND low encode p95, we raise by one step.
+    double adaptive_rtt_recover_ms = 50.0;
+
+    // Health monitor: sample interval (seconds).
+    int health_sample_interval_s = 2;
+
+    // Health monitor: alert cooldown (seconds). Repeated alerts for
+    // the same resource+severity within this window are dropped.
+    int health_alert_cooldown_s = 30;
+
+    // Health monitor: thresholds.
+    double health_cpu_warn_pct = 85.0;
+    double health_cpu_crit_pct = 95.0;
+    double health_memory_warn_pct = 85.0;
+    double health_memory_crit_pct = 95.0;
+    double health_disk_warn_pct_free = 10.0;
+    double health_disk_crit_pct_free = 5.0;
+    double health_thermal_warn_c = 80.0;
+    double health_thermal_crit_c = 90.0;
+
+    // Session recorder: max entries in the index file.
+    int session_max_index_entries = 500;
   };
 
   extern video_t video;

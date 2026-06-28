@@ -616,6 +616,29 @@ namespace config {
     true,  // enet_4mib_buffer   (grow ENet UDP buffers to 4 MiB)
     8,  // pipewire_latency_ms (PW_KEY_NODE_LATENCY hint)
     true,  // cpu_pinning        (SCHED_RR + physical-core affinity)
+    true,  // telemetry_enabled
+    true,  // adaptive_bitrate_enabled
+    true,  // health_monitor_enabled
+    true,  // session_recorder_enabled
+    true,  // app_profiler_enabled
+    1000,  // adaptive_floor_kbps
+    150000,  // adaptive_ceiling_kbps
+    2000,  // adaptive_step_kbps
+    2000,  // adaptive_cooldown_ms
+    1.0,  // adaptive_loss_threshold_pct
+    80.0,  // adaptive_rtt_threshold_ms
+    50.0,  // adaptive_rtt_recover_ms
+    2,  // health_sample_interval_s
+    30,  // health_alert_cooldown_s
+    85.0,  // health_cpu_warn_pct
+    95.0,  // health_cpu_crit_pct
+    85.0,  // health_memory_warn_pct
+    95.0,  // health_memory_crit_pct
+    10.0,  // health_disk_warn_pct_free
+    5.0,  // health_disk_crit_pct_free
+    80.0,  // health_thermal_warn_c
+    90.0,  // health_thermal_crit_c
+    500,  // session_max_index_entries
   };
 
   bool endline(char ch) {
@@ -1409,6 +1432,20 @@ namespace config {
     bool_f(vars, "enet_4mib_buffer", solarflare.enet_4mib_buffer);
     int_between_f(vars, "pipewire_latency_ms", solarflare.pipewire_latency_ms, {1, 40});
     bool_f(vars, "cpu_pinning", solarflare.cpu_pinning);
+
+    // SolarFlare round-2: telemetry / adaptive / health / sessions.
+    bool_f(vars, "telemetry_enabled", solarflare.telemetry_enabled);
+    bool_f(vars, "adaptive_bitrate_enabled", solarflare.adaptive_bitrate_enabled);
+    bool_f(vars, "health_monitor_enabled", solarflare.health_monitor_enabled);
+    bool_f(vars, "session_recorder_enabled", solarflare.session_recorder_enabled);
+    bool_f(vars, "app_profiler_enabled", solarflare.app_profiler_enabled);
+    int_between_f(vars, "adaptive_floor_kbps", solarflare.adaptive_floor_kbps, {100, 1000000});
+    int_between_f(vars, "adaptive_ceiling_kbps", solarflare.adaptive_ceiling_kbps, {100, 1000000});
+    int_between_f(vars, "adaptive_step_kbps", solarflare.adaptive_step_kbps, {100, 100000});
+    int_between_f(vars, "adaptive_cooldown_ms", solarflare.adaptive_cooldown_ms, {100, 60000});
+    int_between_f(vars, "health_sample_interval_s", solarflare.health_sample_interval_s, {1, 600});
+    int_between_f(vars, "health_alert_cooldown_s", solarflare.health_alert_cooldown_s, {1, 3600});
+    int_between_f(vars, "session_max_index_entries", solarflare.session_max_index_entries, {10, 100000});
 
     int port = sunshine.port;
     int_between_f(vars, "port"s, port, {1024 + nvhttp::PORT_HTTPS, 65535 - rtsp_stream::RTSP_SETUP_PORT});

@@ -252,6 +252,25 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/stat_trackers.cpp"
         "${CMAKE_SOURCE_DIR}/src/rswrapper.h"
         "${CMAKE_SOURCE_DIR}/src/rswrapper.c"
+        # SolarFlare subsystems (telemetry / adaptive bitrate / health
+        # monitor / network probe / session recorder / app profiler).
+        "${CMAKE_SOURCE_DIR}/src/solarflare/solarflare.h"
+        "${CMAKE_SOURCE_DIR}/src/solarflare/runtime.h"
+        "${CMAKE_SOURCE_DIR}/src/solarflare/runtime.cpp"
+        "${CMAKE_SOURCE_DIR}/src/solarflare/telemetry.h"
+        "${CMAKE_SOURCE_DIR}/src/solarflare/telemetry.cpp"
+        "${CMAKE_SOURCE_DIR}/src/solarflare/adaptive_bitrate.h"
+        "${CMAKE_SOURCE_DIR}/src/solarflare/adaptive_bitrate.cpp"
+        "${CMAKE_SOURCE_DIR}/src/solarflare/health_monitor.h"
+        "${CMAKE_SOURCE_DIR}/src/solarflare/health_monitor.cpp"
+        "${CMAKE_SOURCE_DIR}/src/solarflare/network_probe.h"
+        "${CMAKE_SOURCE_DIR}/src/solarflare/network_probe.cpp"
+        "${CMAKE_SOURCE_DIR}/src/solarflare/session_recorder.h"
+        "${CMAKE_SOURCE_DIR}/src/solarflare/session_recorder.cpp"
+        "${CMAKE_SOURCE_DIR}/src/solarflare/app_profiler.h"
+        "${CMAKE_SOURCE_DIR}/src/solarflare/app_profiler.cpp"
+        "${CMAKE_SOURCE_DIR}/src/solarflare/platform/runtime_config.h"
+        "${CMAKE_SOURCE_DIR}/src/solarflare/platform/runtime_config.cpp"
         ${PLATFORM_TARGET_FILES})
 
 if(NOT SUNSHINE_ASSETS_DIR_DEF)
