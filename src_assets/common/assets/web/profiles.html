@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="auto">
+
+<head>
+  <%- header %>
+</head>
+
+<body id="app" v-cloak>
+  <Navbar></Navbar>
+  <div id="content" class="container">
+    <div class="d-flex flex-wrap align-items-center justify-content-between my-4 gap-3">
+      <div>
+        <h1 class="mb-1">{{ $t('profiles.title') }}</h1>
+        <p class="text-body-secondary mb-0">{{ $t('profiles.subtitle') }}</p>
+      </div>
+      <button class="btn btn-warning" @click="openCreate">
+        <plus :size="16" class="icon"></plus>
+        {{ $t('profiles.new') }}
+      </button>
+    </div>
+
+    <div v-if="active" class="alert alert-warning d-flex align-items-center gap-2">
+      <zap :size="18" class="icon"></zap>
+      <span>{{ $t('profiles.active', { name: active }) }}</span>
+    </div>
+
+    <div class="card solarflare-card">
+      <div class="card-body p-0">
+        <table class="table table-hover mb-0 align-middle">
+          <thead>
+            <tr>
+              <th>{{ $t('profiles.name') }}</th>
+              <th>{{ $t('profiles.match') }}</th>
+              <th class="text-end">{{ $t('profiles.fps') }}</th>
+              <th class="text-end">{{ $t('profiles.bitrate') }}</th>
+              <th>{{ $t('profiles.codec') }}</th>
+              <th>{{ $t('profiles.priority') }}</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="p in profiles" :key="p.name">
+              <td><strong>{{ p.name }}</strong></td>
+              <td><code class="small">{{ p.match }}</code></td>
+              <td class="text-end">{{ p.fps || '—' }}</td>
+              <td class="text-end">{{ p.bitrate_kbps ? (p.bitrate_kbps + ' kbps') : '—' }}</td>
+              <td>{{ p.codec || '—' }}</td>
+              <td>{{ p.priority }}</td>
+              <td class="text-end">
+                <button class="btn btn-sm btn-outline-secondary me-1" @click="openEdit(p)">
+                  <pencil :size="14" class="icon"></pencil>
+                </button>
+                <button class="btn btn-sm btn-outline-danger" @click="remove(p.name)">
+                  <trash-2 :size="14" class="icon"></trash-2>
+                </button>
+              </td>
+            </tr>
+            <tr v-if="profiles.length === 0">
+              <td colspan="7" class="text-center text-body-secondary py-4">{{ $t('profiles.empty') }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Edit modal -->
+    <div v-if="editing" class="modal-backdrop-solarflare" @click.self="closeEdit">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content solarflare-card">
+          <div class="modal-header">
+            <h5 class="modal-title">{{ editing.name ? $t('profiles.edit') : $t('profiles.new') }}</h5>
+            <button class="btn-close" @click="closeEdit"></button>
+          </div>
+          <div class="modal-body">
+            <div class="mb-3">
+              <label class="form-label">{{ $t('profiles.name') }}</label>
+              <input class="form-control" v-model="form.name" :disabled="!!editing.name">
+            </div>
+            <div class="mb-3">
+              <label class="form-label">{{ $t('profiles.match') }}</label>
+              <input class="form-control" v-model="form.match" placeholder="EldenRing">
+              <div class="form-text">{{ $t('profiles.match_desc') }}</div>
+            </div>
+            <div class="row g-2">
+              <div class="col-6">
+                <label class="form-label">{{ $t('profiles.fps') }}</label>
+                <input type="number" class="form-control" v-model.number="form.fps">
+              </div>
+              <div class="col-6">
+                <label class="form-label">{{ $t('profiles.bitrate') }}</label>
+                <input type="number" class="form-control" v-model.number="form.bitrate_kbps">
+              </div>
+              <div class="col-6">
+                <label class="form-label">{{ $t('profiles.width') }}</label>
+                <input type="number" class="form-control" v-model.number="form.width">
+              </div>
+              <div class="col-6">
+                <label class="form-label">{{ $t('profiles.height') }}</label>
+                <input type="number" class="form-control" v-model.number="form.height">
+              </div>
+              <div class="col-6">
+                <label class="form-label">{{ $t('profiles.priority') }}</label>
+                <input type="number" class="form-control" v-model.number="form.priority">
+              </div>
+              <div class="col-6">
+                <label class="form-label">{{ $t('profiles.encoder') }}</label>
+                <select class="form-select" v-model="form.encoder">
+                  <option value="">—</option>
+                  <option value="nvenc">NVENC</option>
+                  <option value="amf">AMF</option>
+                  <option value="vaapi">VAAPI</option>
+                  <option value="software">Software</option>
+                  <option value="vt">VideoToolbox</option>
+                  <option value="qsv">QuickSync</option>
+                  <option value="vulkan">Vulkan</option>
+                </select>
+              </div>
+              <div class="col-6">
+                <label class="form-label">{{ $t('profiles.codec') }}</label>
+                <select class="form-select" v-model="form.codec">
+                  <option value="">—</option>
+                  <option value="h264">H.264</option>
+                  <option value="hevc">HEVC</option>
+                  <option value="av1">AV1</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" @click="closeEdit">{{ $t('_common.cancel') }}</button>
+            <button class="btn btn-warning" @click="save">{{ $t('_common.save') }}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+
+<script type="module">
+  import { createApp } from 'vue'
+  import Navbar from './Navbar.vue'
+  import { initApp } from './init'
+  import { Plus, Pencil, Trash2, Zap } from '@lucide/vue'
+
+  const app = createApp({
+    components: { Navbar, Plus, Pencil, Trash2, Zap },
+    data() {
+      return {
+        profiles: [],
+        active: '',
+        editing: null,
+        form: { name: '', match: '', fps: null, width: null, height: null, bitrate_kbps: null, encoder: '', codec: '', priority: 100, enabled: true }
+      }
+    },
+    methods: {
+      async load() {
+        const r = await fetch('./api/solarflare/profiles')
+        const j = await r.json()
+        this.profiles = j.profiles || []
+        this.active = j.active || ''
+      },
+      openCreate() {
+        this.editing = { name: '' }
+        this.form = { name: '', match: '', fps: null, width: null, height: null, bitrate_kbps: null, encoder: '', codec: '', priority: 100, enabled: true }
+      },
+      openEdit(p) {
+        this.editing = { name: p.name }
+        this.form = { ...p, fps: p.fps || null, width: p.width || null, height: p.height || null, bitrate_kbps: p.bitrate_kbps || null }
+      },
+      closeEdit() { this.editing = null },
+      async save() {
+        if (!this.form.name || !this.form.match) { alert(this.$t('profiles.required')); return }
+        await fetch('./api/solarflare/profiles', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.form)
+        })
+        this.editing = null
+        await this.load()
+      },
+      async remove(name) {
+        if (!confirm(this.$t('profiles.confirm_delete', { name }))) return
+        await fetch('./api/solarflare/profiles/' + encodeURIComponent(name), { method: 'DELETE' })
+        await this.load()
+      }
+    },
+    mounted() { this.load() }
+  })
+
+  initApp(app)
+</script>
+</html>

@@ -36,6 +36,64 @@
                 {{ $t('navbar.featured') }}
               </a>
             </li>
+            <li class="nav-item dropdown">
+              <button class="nav-link dropdown-toggle" type="button" id="navbarSolarflare"
+                      data-bs-toggle="dropdown" aria-expanded="false">
+                <sun :size="18" class="icon"></sun>
+                {{ $t('navbar.solarflare') }}
+              </button>
+              <ul class="dropdown-menu" aria-labelledby="navbarSolarflare">
+                <li>
+                  <a class="dropdown-item" href="./dashboard">
+                    <layout-dashboard :size="16" class="icon"></layout-dashboard>
+                    {{ $t('navbar.dashboard') }}
+                  </a>
+                </li>
+                <li>
+                  <a class="dropdown-item" href="./sf-health">
+                    <heart-pulse :size="16" class="icon"></heart-pulse>
+                    {{ $t('navbar.health') }}
+                  </a>
+                </li>
+                <li>
+                  <a class="dropdown-item" href="./sf-network">
+                    <wifi :size="16" class="icon"></wifi>
+                    {{ $t('navbar.network') }}
+                  </a>
+                </li>
+                <li>
+                  <a class="dropdown-item" href="./profiles">
+                    <sliders :size="16" class="icon"></sliders>
+                    {{ $t('navbar.profiles') }}
+                  </a>
+                </li>
+                <li>
+                  <a class="dropdown-item" href="./codec-presets">
+                    <film :size="16" class="icon"></film>
+                    {{ $t('navbar.codec_presets') }}
+                  </a>
+                </li>
+                <li>
+                  <a class="dropdown-item" href="./sessions">
+                    <history :size="16" class="icon"></history>
+                    {{ $t('navbar.sessions') }}
+                  </a>
+                </li>
+                <li>
+                  <a class="dropdown-item" href="./sf-clients">
+                    <users :size="16" class="icon"></users>
+                    {{ $t('navbar.sf_clients') }}
+                  </a>
+                </li>
+                <li><hr class="dropdown-divider"></li>
+                <li>
+                  <a class="dropdown-item" href="./wizard">
+                    <wand :size="16" class="icon"></wand>
+                    {{ $t('navbar.wizard') }}
+                  </a>
+                </li>
+              </ul>
+            </li>
             <li class="nav-item">
               <a class="nav-link" href="./config">
                 <Settings :size="18" class="icon"></Settings>
@@ -83,7 +141,7 @@
 </template>
 
 <script>
-import { CircleUserRound, Home, Info, Layers, Lock, LogOut, Settings, Shield, Star } from '@lucide/vue'
+import { CircleUserRound, Film, HeartPulse, History, Home, Info, LayoutDashboard, Layers, Lock, LogOut, Settings, Shield, Sliders, Star, Sun, Users, Wand, Wifi } from '@lucide/vue'
 import ThemeToggle from './ThemeToggle.vue'
 import Notification from './Notification.vue'
 
@@ -99,7 +157,16 @@ export default {
     Shield,
     Info,
     CircleUserRound,
-    LogOut
+    LogOut,
+    Sun,
+    LayoutDashboard,
+    HeartPulse,
+    Wifi,
+    Sliders,
+    Film,
+    History,
+    Users,
+    Wand
   },
   created() {
     console.log("Header mounted!")

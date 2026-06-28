@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="auto">
+
+<head>
+  <%- header %>
+</head>
+
+<body id="app" v-cloak>
+  <Navbar></Navbar>
+  <div id="content" class="container">
+    <div class="d-flex flex-wrap align-items-center justify-content-between my-4 gap-3">
+      <div>
+        <h1 class="mb-1">{{ $t('dashboard.title') }}</h1>
+        <p class="text-body-secondary mb-0">{{ $t('dashboard.subtitle') }}</p>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <span class="solarflare-status-dot" :class="connClass"></span>
+        <span class="text-body-secondary small">{{ connText }}</span>
+        <button class="btn btn-sm btn-outline-secondary" @click="pauseToggle">
+          <pause v-if="!paused" :size="14" class="icon"></pause>
+          <play v-else :size="14" class="icon"></play>
+          {{ paused ? $t('dashboard.resume') : $t('dashboard.pause') }}
+        </button>
+      </div>
+    </div>
+
+    <!-- Session card -->
+    <div class="card solarflare-card my-3" v-if="snap.session.active">
+      <div class="card-body">
+        <div class="d-flex flex-wrap align-items-center gap-3">
+          <monitor-play :size="32" class="text-warning"></monitor-play>
+          <div class="flex-grow-1">
+            <h5 class="mb-1">{{ snap.session.client_app || snap.session.client_name }}</h5>
+            <p class="mb-0 text-body-secondary">
+              {{ snap.session.client_name }} &middot;
+              {{ snap.session.width }}x{{ snap.session.height }} @ {{ snap.session.fps }} &middot;
+              {{ snap.session.bitrate_kbps }} kbps
+            </p>
+          </div>
+          <div class="text-end">
+            <div class="h3 mb-0 text-warning">{{ snap.fps_ewma.toFixed(1) }}</div>
+            <div class="small text-body-secondary">FPS EWMA</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Throughput gauges -->
+    <div class="row g-3 my-1">
+      <div class="col-12 col-md-4">
+        <div class="card solarflare-card h-100">
+          <div class="card-body">
+            <div class="small text-body-secondary">{{ $t('dashboard.frames_total') }}</div>
+            <div class="h2 mb-0">{{ formatNumber(snap.frames) }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-md-4">
+        <div class="card solarflare-card h-100">
+          <div class="card-body">
+            <div class="small text-body-secondary">{{ $t('dashboard.bytes_sent') }}</div>
+            <div class="h2 mb-0">{{ formatBytes(snap.bytes_sent) }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-md-4">
+        <div class="card solarflare-card h-100">
+          <div class="card-body">
+            <div class="small text-body-secondary">{{ $t('dashboard.packets_lost') }}</div>
+            <div class="h2 mb-0" :class="snap.packets_lost > 0 ? 'text-warning' : ''">
+              {{ formatNumber(snap.packets_lost) }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Per-stage latency chart -->
+    <div class="card solarflare-card my-3">
+      <div class="card-body">
+        <h5 class="card-title">{{ $t('dashboard.stage_latency') }}</h5>
+        <p class="text-body-secondary small mb-3">{{ $t('dashboard.stage_latency_desc') }}</p>
+        <div v-for="row in latencyRows" :key="row.stage" class="mb-3">
+          <div class="d-flex justify-content-between small">
+            <span>{{ row.stage }}</span>
+            <span class="text-body-secondary">
+              min {{ row.min.toFixed(0) }}us / max {{ row.max.toFixed(0) }}us / avg {{ row.avg.toFixed(0) }}us / n={{ row.n }}
+            </span>
+          </div>
+          <div class="progress" style="height: 8px;">
+            <div class="progress-bar bg-warning"
+                 :style="{ width: Math.min(100, row.avg / 1000 * 100) + '%' }"
+                 :title="row.avg + ' us'"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Throughput sparkline -->
+    <div class="row g-3 my-1">
+      <div class="col-12 col-md-6">
+        <div class="card solarflare-card h-100">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-baseline">
+              <h6 class="mb-0">{{ $t('dashboard.kbps') }}</h6>
+              <span class="h4 mb-0 text-warning">{{ snap.kbps_ewma.toFixed(0) }}</span>
+            </div>
+            <svg width="100%" height="40" class="mt-2">
+              <polyline fill="none" stroke="#FBBF24" stroke-width="1.5"
+                        :points="kbpsPoints"></polyline>
+            </svg>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-md-6">
+        <div class="card solarflare-card h-100">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-baseline">
+              <h6 class="mb-0">{{ $t('dashboard.fps') }}</h6>
+              <span class="h4 mb-0 text-warning">{{ snap.fps_ewma.toFixed(1) }}</span>
+            </div>
+            <svg width="100%" height="40" class="mt-2">
+              <polyline fill="none" stroke="#FB923C" stroke-width="1.5"
+                        :points="fpsPoints"></polyline>
+            </svg>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+
+<script type="module">
+  import { createApp } from 'vue'
+  import Navbar from './Navbar.vue'
+  import { initApp } from './init'
+  import { Pause, Play, MonitorPlay } from '@lucide/vue'
+
+  const app = createApp({
+    components: { Navbar, Pause, Play, MonitorPlay },
+    data() {
+      return {
+        snap: {
+          frames: 0, bytes_sent: 0, packets_lost: 0,
+          fps_ewma: 0, kbps_ewma: 0,
+          latency: [], session: { active: false, client_name: '', client_app: '', width: 0, height: 0, fps: 0, bitrate_kbps: 0 }
+        },
+        connState: 'connecting',
+        paused: false,
+        pollTimer: null,
+        kbpsHistory: [],
+        fpsHistory: [],
+        maxHistory: 60
+      }
+    },
+    computed: {
+      latencyRows() {
+        return this.snap.latency.map(r => ({
+          stage: r.stage, min: r.min_us, max: r.max_us, avg: r.avg_us, n: r.n
+        }))
+      },
+      kbpsPoints() {
+        if (!this.kbpsHistory.length) return ''
+        const max = Math.max(...this.kbpsHistory, 1)
+        return this.kbpsHistory.map((v, i) => {
+          const x = (i / Math.max(this.kbpsHistory.length - 1, 1)) * 100
+          const y = 40 - (v / max) * 38
+          return `${x},${y}`
+        }).join(' ')
+      },
+      fpsPoints() {
+        if (!this.fpsHistory.length) return ''
+        const max = Math.max(...this.fpsHistory, 1)
+        return this.fpsHistory.map((v, i) => {
+          const x = (i / Math.max(this.fpsHistory.length - 1, 1)) * 100
+          const y = 40 - (v / max) * 38
+          return `${x},${y}`
+        }).join(' ')
+      },
+      connClass() {
+        return { ok: 'solarflare-status-ok', warn: 'solarflare-status-warn', err: 'solarflare-status-error', connecting: 'solarflare-status-unknown' }[this.connState]
+      },
+      connText() {
+        return { ok: this.$t('dashboard.connected'), warn: this.$t('dashboard.paused'), err: this.$t('dashboard.error'), connecting: this.$t('dashboard.connecting') }[this.connState]
+      }
+    },
+    methods: {
+      formatNumber(n) {
+        return new Intl.NumberFormat().format(n || 0)
+      },
+      formatBytes(n) {
+        if (!n) return '0 B'
+        const units = ['B', 'KB', 'MB', 'GB', 'TB']
+        let i = 0, v = n
+        while (v >= 1024 && i < units.length - 1) { v /= 1024; ++i }
+        return `${v.toFixed(1)} ${units[i]}`
+      },
+      async poll() {
+        if (this.paused) return
+        try {
+          const r = await fetch('./api/solarflare/telemetry')
+          if (!r.ok) throw new Error('http ' + r.status)
+          this.snap = await r.json()
+          this.connState = 'ok'
+          this.kbpsHistory.push(this.snap.kbps_ewma)
+          this.fpsHistory.push(this.snap.fps_ewma)
+          if (this.kbpsHistory.length > this.maxHistory) this.kbpsHistory.shift()
+          if (this.fpsHistory.length > this.maxHistory) this.fpsHistory.shift()
+        } catch (e) {
+          console.error(e)
+          this.connState = 'err'
+        }
+      },
+      pauseToggle() { this.paused = !this.paused }
+    },
+    mounted() {
+      this.poll()
+      this.pollTimer = setInterval(this.poll, 500)
+    },
+    beforeUnmount() {
+      if (this.pollTimer) clearInterval(this.pollTimer)
+    }
+  })
+
+  initApp(app)
+</script>
+</html>

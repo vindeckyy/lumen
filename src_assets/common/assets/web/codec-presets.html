@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="auto">
+
+<head>
+  <%- header %>
+</head>
+
+<body id="app" v-cloak>
+  <Navbar></Navbar>
+  <div id="content" class="container">
+    <div class="my-4">
+      <h1 class="mb-1">{{ $t('codec_presets.title') }}</h1>
+      <p class="text-body-secondary mb-0">{{ $t('codec_presets.subtitle') }}</p>
+    </div>
+
+    <div class="d-flex flex-wrap gap-2 mb-3">
+      <button v-for="e in encoders" :key="e"
+              class="btn btn-sm"
+              :class="filter === e ? 'btn-warning' : 'btn-outline-secondary'"
+              @click="filter = e">
+        {{ e }}
+      </button>
+    </div>
+
+    <div class="row g-3">
+      <div v-for="p in visiblePresets" :key="p.name" class="col-12 col-md-6 col-lg-4">
+        <div class="card solarflare-card h-100">
+          <div class="card-body d-flex flex-column">
+            <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+              <h5 class="card-title mb-0">{{ p.name }}</h5>
+              <span class="badge bg-secondary">{{ p.encoder }}/{{ p.codec }}</span>
+            </div>
+            <p class="text-body-secondary small flex-grow-1">{{ p.description }}</p>
+            <details>
+              <summary class="small text-body-secondary">{{ $t('codec_presets.settings_count', { n: Object.keys(p.kv).length }) }}</summary>
+              <ul class="small mt-2 mb-0">
+                <li v-for="(v, k) in p.kv" :key="k"><code>{{ k }}</code> = <code>{{ v }}</code></li>
+              </ul>
+            </details>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+
+<script type="module">
+  import { createApp } from 'vue'
+  import Navbar from './Navbar.vue'
+  import { initApp } from './init'
+
+  const app = createApp({
+    components: { Navbar },
+    data() { return { presets: [], filter: 'all', timer: null } },
+    computed: {
+      encoders() {
+        const set = new Set(['all'])
+        for (const p of this.presets) set.add(p.encoder)
+        return Array.from(set)
+      },
+      visiblePresets() {
+        if (this.filter === 'all') return this.presets
+        return this.presets.filter(p => p.encoder === this.filter)
+      }
+    },
+    methods: {
+      async load() {
+        const r = await fetch('./api/solarflare/codec-presets')
+        const j = await r.json()
+        this.presets = j.presets || []
+      }
+    },
+    mounted() { this.load() }
+  })
+
+  initApp(app)
+</script>
+</html>

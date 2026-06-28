@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="auto">
+
+<head>
+  <%- header %>
+</head>
+
+<body id="app" v-cloak>
+  <Navbar></Navbar>
+  <div id="content" class="container">
+    <div class="d-flex flex-wrap align-items-center justify-content-between my-4 gap-3">
+      <div>
+        <h1 class="mb-1">{{ $t('sessions.title') }}</h1>
+        <p class="text-body-secondary mb-0">{{ $t('sessions.subtitle') }}</p>
+      </div>
+      <span v-if="recording" class="badge bg-warning text-dark">
+        <circle :size="10" class="icon blink"></circle>
+        {{ $t('sessions.recording') }}
+      </span>
+    </div>
+
+    <div class="card solarflare-card">
+      <div class="card-body p-0">
+        <table class="table table-hover mb-0 align-middle">
+          <thead>
+            <tr>
+              <th>{{ $t('sessions.when') }}</th>
+              <th>{{ $t('sessions.client') }}</th>
+              <th>{{ $t('sessions.app') }}</th>
+              <th class="text-end">{{ $t('sessions.resolution') }}</th>
+              <th class="text-end">{{ $t('sessions.duration') }}</th>
+              <th class="text-end">{{ $t('sessions.fps') }}</th>
+              <th class="text-end">{{ $t('sessions.kbps') }}</th>
+              <th class="text-end">{{ $t('sessions.frames') }}</th>
+              <th class="text-end">{{ $t('sessions.lost') }}</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="loading">
+              <td colspan="10" class="text-center py-4">
+                <loader :size="20" class="icon spin"></loader>
+                {{ $t('_common.loading') }}
+              </td>
+            </tr>
+            <tr v-else-if="sessions.length === 0">
+              <td colspan="10" class="text-center text-body-secondary py-4">{{ $t('sessions.empty') }}</td>
+            </tr>
+            <tr v-for="s in sessions" :key="s.id">
+              <td><code class="small">{{ formatDate(s.started_at) }}</code></td>
+              <td>{{ s.client_name }}</td>
+              <td>{{ s.client_app }}</td>
+              <td class="text-end">{{ s.width }}x{{ s.height }}@{{ s.fps }}</td>
+              <td class="text-end">{{ formatDuration(s.duration_s) }}</td>
+              <td class="text-end">{{ s.avg_fps.toFixed(1) }}</td>
+              <td class="text-end">{{ s.avg_kbps.toFixed(0) }}</td>
+              <td class="text-end">{{ formatNumber(s.frames) }}</td>
+              <td class="text-end" :class="s.packets_lost > 0 ? 'text-warning' : ''">{{ formatNumber(s.packets_lost) }}</td>
+              <td class="text-end">
+                <button class="btn btn-sm btn-outline-danger" @click="remove(s.id)">
+                  <trash-2 :size="14" class="icon"></trash-2>
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</body>
+
+<script type="module">
+  import { createApp } from 'vue'
+  import Navbar from './Navbar.vue'
+  import { initApp } from './init'
+  import { Circle, Loader, Trash2 } from '@lucide/vue'
+
+  const app = createApp({
+    components: { Navbar, Circle, Loader, Trash2 },
+    data() {
+      return { sessions: [], loading: true, recording: false, timer: null }
+    },
+    methods: {
+      formatNumber(n) { return new Intl.NumberFormat().format(n || 0) },
+      formatDate(secs) { return new Date(secs * 1000).toLocaleString() },
+      formatDuration(s) {
+        const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60
+        return h ? `${h}h ${m}m` : m ? `${m}m ${sec}s` : `${sec}s`
+      },
+      async load() {
+        try {
+          const r = await fetch('./api/solarflare/sessions?limit=50')
+          const j = await r.json()
+          this.sessions = j.sessions || []
+          this.recording = !!j.recording
+        } catch (e) { console.error(e) }
+        finally { this.loading = false }
+      },
+      async remove(id) {
+        if (!confirm(this.$t('sessions.confirm_delete'))) return
+        await fetch('./api/solarflare/sessions?id=' + encodeURIComponent(id), { method: 'DELETE' })
+        await this.load()
+      }
+    },
+    mounted() {
+      this.load()
+      this.timer = setInterval(this.load, 5000)
+    },
+    beforeUnmount() { if (this.timer) clearInterval(this.timer) }
+  })
+
+  initApp(app)
+</script>
+</html>

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="auto">
+
+<head>
+  <%- header %>
+</head>
+
+<body id="app" v-cloak>
+  <Navbar></Navbar>
+  <div id="content" class="container">
+    <div class="my-4 text-center">
+      <img src="/images/logo-solarflare-45.svg" height="80" alt="SolarFlare" class="mb-3">
+      <h1 class="mb-1">{{ $t('wizard.title') }}</h1>
+      <p class="text-body-secondary">{{ $t('wizard.subtitle') }}</p>
+    </div>
+
+    <div class="card solarflare-card">
+      <div class="card-body">
+        <ol class="list-group list-group-numbered list-group-flush">
+          <li class="list-group-item d-flex justify-content-between align-items-center">
+            <div>
+              <strong>{{ $t('wizard.step1_title') }}</strong>
+              <div class="text-body-secondary small">{{ $t('wizard.step1_desc') }}</div>
+            </div>
+            <a class="btn btn-sm btn-outline-secondary" href="./password">{{ $t('wizard.set') }}</a>
+          </li>
+          <li class="list-group-item d-flex justify-content-between align-items-center">
+            <div>
+              <strong>{{ $t('wizard.step2_title') }}</strong>
+              <div class="text-body-secondary small">{{ $t('wizard.step2_desc') }}</div>
+            </div>
+            <a class="btn btn-sm btn-outline-secondary" href="./config">{{ $t('wizard.tune') }}</a>
+          </li>
+          <li class="list-group-item d-flex justify-content-between align-items-center">
+            <div>
+              <strong>{{ $t('wizard.step3_title') }}</strong>
+              <div class="text-body-secondary small">{{ $t('wizard.step3_desc') }}</div>
+            </div>
+            <a class="btn btn-sm btn-outline-secondary" href="./profiles">{{ $t('wizard.add') }}</a>
+          </li>
+          <li class="list-group-item d-flex justify-content-between align-items-center">
+            <div>
+              <strong>{{ $t('wizard.step4_title') }}</strong>
+              <div class="text-body-secondary small">{{ $t('wizard.step4_desc') }}</div>
+            </div>
+            <a class="btn btn-sm btn-outline-secondary" href="./codec-presets">{{ $t('wizard.browse') }}</a>
+          </li>
+          <li class="list-group-item d-flex justify-content-between align-items-center">
+            <div>
+              <strong>{{ $t('wizard.step5_title') }}</strong>
+              <div class="text-body-secondary small">{{ $t('wizard.step5_desc') }}</div>
+            </div>
+            <a class="btn btn-sm btn-outline-secondary" href="./pin">{{ $t('wizard.pin') }}</a>
+          </li>
+        </ol>
+        <div class="text-center mt-3">
+          <a class="btn btn-warning" href="./">
+            <play :size="16" class="icon"></play>
+            {{ $t('wizard.done') }}
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+
+<script type="module">
+  import { createApp } from 'vue'
+  import Navbar from './Navbar.vue'
+  import { initApp } from './init'
+  import { Play } from '@lucide/vue'
+
+  const app = createApp({ components: { Navbar, Play } })
+  initApp(app)
+</script>
+</html>

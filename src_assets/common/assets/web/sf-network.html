@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="auto">
+
+<head>
+  <%- header %>
+</head>
+
+<body id="app" v-cloak>
+  <Navbar></Navbar>
+  <div id="content" class="container">
+    <div class="my-4">
+      <h1 class="mb-1">{{ $t('sf_network.title') }}</h1>
+      <p class="text-body-secondary mb-0">{{ $t('sf_network.subtitle') }}</p>
+    </div>
+
+    <div class="row g-3 mb-3">
+      <div class="col-12 col-md-4">
+        <div class="card solarflare-card">
+          <div class="card-body">
+            <div class="small text-body-secondary">{{ $t('sf_network.aggregate') }}</div>
+            <div class="d-flex align-items-baseline gap-2">
+              <span class="display-4" :class="scoreCls(snap.aggregate_score)">{{ snap.aggregate_score.toFixed(0) }}</span>
+              <span class="text-body-secondary">/100</span>
+            </div>
+            <div class="small" :class="scoreCls(snap.aggregate_score)">{{ scoreLabel(snap.aggregate_score) }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card solarflare-card">
+      <div class="card-body p-0">
+        <table class="table table-hover mb-0 align-middle">
+          <thead>
+            <tr>
+              <th>{{ $t('sf_network.target') }}</th>
+              <th class="text-end">{{ $t('sf_network.rtt_p95') }}</th>
+              <th class="text-end">{{ $t('sf_network.jitter') }}</th>
+              <th class="text-end">{{ $t('sf_network.loss') }}</th>
+              <th class="text-end">{{ $t('sf_network.kbps') }}</th>
+              <th>{{ $t('sf_network.score') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="targets.length === 0">
+              <td colspan="6" class="text-center text-body-secondary py-4">{{ $t('sf_network.empty') }}</td>
+            </tr>
+            <tr v-for="t in targets" :key="t.name">
+              <td>{{ t.name }}</td>
+              <td class="text-end">{{ t.rtt_p95_ms.toFixed(1) }} ms</td>
+              <td class="text-end">{{ t.jitter_ms.toFixed(1) }} ms</td>
+              <td class="text-end" :class="t.loss_pct > 1 ? 'text-warning' : ''">{{ t.loss_pct.toFixed(2) }}%</td>
+              <td class="text-end">{{ t.kbps.toFixed(0) }}</td>
+              <td>
+                <div class="progress" style="height: 6px; width: 100px;">
+                  <div class="progress-bar" :class="scoreBarCls(t.score)" :style="{ width: t.score + '%' }"></div>
+                </div>
+                <span class="small" :class="scoreCls(t.score)">{{ t.score.toFixed(0) }}</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</body>
+
+<script type="module">
+  import { createApp } from 'vue'
+  import Navbar from './Navbar.vue'
+  import { initApp } from './init'
+
+  const app = createApp({
+    components: { Navbar },
+    data() { return { snap: { aggregate_score: 100, targets: [] }, timer: null } },
+    computed: {
+      targets() { return this.snap.targets || [] }
+    },
+    methods: {
+      scoreCls(s) {
+        if (s >= 80) return 'text-success'
+        if (s >= 60) return 'text-info'
+        if (s >= 40) return 'text-warning'
+        return 'text-danger'
+      },
+      scoreBarCls(s) {
+        if (s >= 80) return 'bg-success'
+        if (s >= 60) return 'bg-info'
+        if (s >= 40) return 'bg-warning'
+        return 'bg-danger'
+      },
+      scoreLabel(s) {
+        if (s >= 80) return this.$t('sf_network.excellent')
+        if (s >= 60) return this.$t('sf_network.good')
+        if (s >= 40) return this.$t('sf_network.marginal')
+        return this.$t('sf_network.bad')
+      },
+      async poll() {
+        try {
+          const r = await fetch('./api/solarflare/network')
+          this.snap = await r.json()
+        } catch (e) { console.error(e) }
+      }
+    },
+    mounted() { this.poll(); this.timer = setInterval(this.poll, 2000) },
+    beforeUnmount() { if (this.timer) clearInterval(this.timer) }
+  })
+
+  initApp(app)
+</script>
+</html>

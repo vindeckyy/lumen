@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="auto">
+
+<head>
+  <%- header %>
+</head>
+
+<body id="app" v-cloak>
+  <Navbar></Navbar>
+  <div id="content" class="container">
+    <div class="my-4">
+      <h1 class="mb-1">{{ $t('sf_health.title') }}</h1>
+      <p class="text-body-secondary mb-0">{{ $t('sf_health.subtitle') }}</p>
+    </div>
+
+    <div class="row g-3 mb-3">
+      <div class="col-6 col-md-3" v-for="r in resourceCards" :key="r.name">
+        <div class="card solarflare-card h-100">
+          <div class="card-body">
+            <div class="small text-body-secondary">{{ r.label }}</div>
+            <div class="h3 mb-0" :class="r.cls">{{ r.value }}</div>
+            <div class="small text-body-secondary">{{ r.unit }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card solarflare-card">
+      <div class="card-body">
+        <h5 class="card-title">{{ $t('sf_health.alerts') }}</h5>
+        <div v-if="alerts.length === 0" class="text-body-secondary text-center py-3">
+          <check-circle :size="20" class="icon text-success"></check-circle>
+          {{ $t('sf_health.no_alerts') }}
+        </div>
+        <ul v-else class="list-group list-group-flush">
+          <li v-for="(a, i) in alerts" :key="i" class="list-group-item d-flex align-items-center gap-2">
+            <component :is="sevIcon(a.severity)" :size="16" :class="sevCls(a.severity)"></component>
+            <span class="flex-grow-1">{{ a.resource }}: {{ a.message }}</span>
+            <span class="text-body-secondary small">{{ formatDate(a.at) }}</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</body>
+
+<script type="module">
+  import { createApp } from 'vue'
+  import Navbar from './Navbar.vue'
+  import { initApp } from './init'
+  import { CheckCircle, AlertTriangle, AlertCircle } from '@lucide/vue'
+
+  const app = createApp({
+    components: { Navbar, CheckCircle, AlertTriangle, AlertCircle },
+    data() { return { resources: [], alerts: [], timer: null } },
+    computed: {
+      resourceCards() {
+        const byName = {}
+        for (const r of this.resources) byName[r.name] = r.value
+        const mk = (name, label, unit, cls = '') => {
+          const v = byName[name]
+          return { name, label, unit, value: v == null ? '—' : v.toFixed(1), cls }
+        }
+        return [
+          mk('cpu', this.$t('sf_health.cpu'), '%'),
+          mk('memory_pct', this.$t('sf_health.memory'), '%'),
+          mk('memory_mib', this.$t('sf_health.memory_mib'), 'MiB'),
+          mk('disk_free_pct', this.$t('sf_health.disk_free'), '%'),
+          mk('disk_free_mib', this.$t('sf_health.disk_free_mib'), 'MiB'),
+          mk('thermal_c', this.$t('sf_health.thermal'), '°C')
+        ].filter(r => byName[r.name] != null)
+      }
+    },
+    methods: {
+      formatDate(secs) { return new Date(secs * 1000).toLocaleTimeString() },
+      sevIcon(s) { return s === 2 ? 'AlertCircle' : 'AlertTriangle' },
+      sevCls(s) { return s === 2 ? 'text-danger' : 'text-warning' },
+      async poll() {
+        try {
+          const r = await fetch('./api/solarflare/health')
+          const j = await r.json()
+          this.resources = j.resources || []
+          this.alerts = (j.alerts || []).slice(0, 25)
+        } catch (e) { console.error(e) }
+      }
+    },
+    mounted() { this.poll(); this.timer = setInterval(this.poll, 2000) },
+    beforeUnmount() { if (this.timer) clearInterval(this.timer) }
+  })
+
+  initApp(app)
+</script>
+</html>
