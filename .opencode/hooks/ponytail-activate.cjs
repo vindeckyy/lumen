@@ -8,15 +8,15 @@
 
 const fs = require('fs');
 const path = require('path');
-const { getDefaultMode, getClaudeDir, isShellSafe } = require('./ponytail-config');
-const { getPonytailInstructions } = require('./ponytail-instructions');
+const { getDefaultMode, getClaudeDir, isShellSafe } = require('./ponytail-config.cjs');
+const { getPonytailInstructions } = require('./ponytail-instructions.cjs');
 const {
   clearMode,
   isCodex,
   isCopilot,
   setMode,
   writeHookOutput,
-} = require('./ponytail-runtime');
+} = require('./ponytail-runtime.cjs');
 
 const claudeDir = getClaudeDir();
 const settingsPath = path.join(claudeDir, 'settings.json');

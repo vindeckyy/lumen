@@ -5,8 +5,8 @@
 // without this every Task-spawned agent runs ponytail-unaware (issue #252).
 // When ponytail mode is active, inject the same ruleset into each subagent.
 
-const { getPonytailInstructions } = require('./ponytail-instructions');
-const { readMode, writeHookOutput } = require('./ponytail-runtime');
+const { getPonytailInstructions } = require('./ponytail-instructions.cjs');
+const { readMode, writeHookOutput } = require('./ponytail-runtime.cjs');
 
 const mode = readMode();
 

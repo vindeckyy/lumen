@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { getClaudeDir } = require('./ponytail-config');
+const { getClaudeDir } = require('./ponytail-config.cjs');
 
 const STATE_FILE = '.ponytail-active';
 const isCopilot = Boolean(process.env.COPILOT_PLUGIN_DATA);
