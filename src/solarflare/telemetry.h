@@ -23,7 +23,8 @@ namespace solarflare {
 
   // ponytail: enum order is array index, keep stable.
   enum pipeline_stage : std::size_t {
-    STAGE_CAPTURE = 0,
+    STAGE_INPUT = 0,
+    STAGE_CAPTURE,
     STAGE_COLOR_CONVERT,
     STAGE_ENCODE,
     STAGE_PACER,
@@ -36,7 +37,7 @@ namespace solarflare {
 
   inline constexpr const char *stage_name(pipeline_stage s) {
     static constexpr const char *names[] = {
-      "capture", "color_convert", "encode", "pacer", "send", "network_rtt"
+      "input", "capture", "color_convert", "encode", "pacer", "send", "network_rtt"
     };
     return s < STAGE_COUNT ? names[s] : "?";
   }
@@ -66,6 +67,8 @@ namespace solarflare {
     std::string client_name;
     std::string client_app;
     std::uint32_t fps = 0, width = 0, height = 0, bitrate_kbps = 0;
+    bool hdr_active = false;            ///< 10-bit/HDR negotiated with client
+    bool allm_active = false;           ///< TV in game mode (CEC ALLM)
     std::chrono::system_clock::time_point started_at;
   };
 

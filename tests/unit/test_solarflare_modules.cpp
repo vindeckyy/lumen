@@ -243,6 +243,54 @@ namespace {
   }
 
   // -------------------------------------------------------------------
+  // Predictive ABR: snapshot is populated after init.
+  // ponytail: we don't drive the controller in a unit test -- the
+  // policy reads from the telemetry observer which is shared global
+  // state. Just check the snapshot shape + lifecycle.
+  // -------------------------------------------------------------------
+  TEST(PredictiveAbrLifecycle, InitAndSnapshot) {
+    EXPECT_TRUE(solarflare::predictive_abr::init({}));
+    auto s = solarflare::predictive_abr::snapshot();
+    EXPECT_TRUE(s.running);
+    solarflare::predictive_abr::shutdown();
+  }
+
+  // -------------------------------------------------------------------
+  // Stutter score: a single large hitch drops the score.
+  // -------------------------------------------------------------------
+  TEST(StutterScore, HitchDropsScore) {
+    solarflare::stutter_score::reset();
+    // 30 normal 60-fps frames (16667 us each), then one 33 ms hitch.
+    for (int i = 0; i < 30; ++i) solarflare::stutter_score::record(16667);
+    solarflare::stutter_score::record(33000);  // 2x expected -> hitch
+    auto s = solarflare::stutter_score::snapshot(60);
+    EXPECT_LT(s.score, 100.0);
+    EXPECT_GE(s.hitches, 1u);
+  }
+
+  TEST(StutterScore, PerfectStreamScores100) {
+    solarflare::stutter_score::reset();
+    for (int i = 0; i < 100; ++i) solarflare::stutter_score::record(16667);
+    auto s = solarflare::stutter_score::snapshot(60);
+    EXPECT_EQ(s.hitches, 0u);
+    EXPECT_EQ(s.score, 100.0);
+  }
+
+  // -------------------------------------------------------------------
+  // Network heatmap: a target accumulates into 60 buckets.
+  // -------------------------------------------------------------------
+  TEST(NetworkHeatmap, OneTargetSixtyBuckets) {
+    solarflare::network_heatmap::init();
+    solarflare::network_heatmap::register_target("t");
+    for (int i = 0; i < 100; ++i) solarflare::network_heatmap::submit_rtt("t", 20 + i % 50);
+    solarflare::network_heatmap::submit_loss("t", 1000, 5);
+    auto h = solarflare::network_heatmap::snapshot();
+    ASSERT_EQ(h.targets.size(), 1u);
+    EXPECT_EQ(h.targets[0].buckets.size(), 60u);
+    solarflare::network_heatmap::shutdown();
+  }
+
+  // -------------------------------------------------------------------
   // Runtime: init + shutdown all subsystems.
   // -------------------------------------------------------------------
   TEST(RuntimeLifecycle, FullCycle) {

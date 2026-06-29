@@ -645,7 +645,17 @@
     "recommended": "recommended",
     "input_to_photon": "input → photon",
     "latency_budget": "Latency budget",
-    "budget_subtitle": "frame budget {frame}ms / server side {budget}ms"
+    "budget_subtitle": "frame budget {frame}ms / server side {budget}ms",
+    "stutter_score": "Stutter score",
+    "hitches": "hitches",
+    "samples": "samples",
+    "pred_abr": "Predictive ABR",
+    "drops_jitter": "drops due to jitter acceleration",
+    "drops_loss": "drops due to packet loss",
+    "raises": "bitrate raises",
+    "end_to_end": "End to end",
+    "network_heatmap": "Network heatmap (last 60 s)",
+    "network_heatmap_desc": "Each cell is one second. RTT up + packet loss turns red."
   },
   "sf_clients": {
     "title": "Connected Clients",

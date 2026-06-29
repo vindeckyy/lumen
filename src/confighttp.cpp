@@ -49,9 +49,12 @@
 #include "solarflare/health_monitor.h"
 #include "solarflare/inspector.h"
 #include "solarflare/latency_budget.h"
+#include "solarflare/network_heatmap.h"
 #include "solarflare/network_probe.h"
 #include "solarflare/performance.h"
+#include "solarflare/predictive_abr.h"
 #include "solarflare/session_recorder.h"
+#include "solarflare/stutter_score.h"
 #include "solarflare/telemetry.h"
 #include "utility.h"
 #include "uuid.h"
@@ -2106,6 +2109,81 @@ namespace confighttp {
     send_response(response, out);
   }
 
+  /**
+   * @brief GET /api/solarflare/predictive-abr
+   *
+   * The predictive (jitter-aware) controller's snapshot.
+   */
+  void sfGetPredictiveAbr(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) return;
+    auto s = solarflare::predictive_abr::snapshot();
+    nlohmann::json out;
+    out["status"] = true;
+    out["running"] = s.running;
+    out["current_kbps"] = s.current_kbps;
+    out["drops_for_jitter"] = s.drops_for_jitter;
+    out["drops_for_loss"] = s.drops_for_loss;
+    out["raises"] = s.raises;
+    out["last_jitter_accel_ms_per_s"] = s.last_jitter_accel;
+    send_response(response, out);
+  }
+
+  /**
+   * @brief GET /api/solarflare/stutter-score?fps=60
+   *
+   * Stutter score is a 0-100 number. 100 = no hitches in the last
+   * 10 s. One 50% hitch drops it ~5 points.
+   */
+  void sfGetStutterScore(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) return;
+    auto q = request->parse_query_string();
+    std::uint32_t fps = 60;
+    if (auto it = q.find("fps"); it != q.end()) {
+      try { fps = static_cast<std::uint32_t>(std::stoul(it->second)); } catch (...) {}
+    }
+    auto s = solarflare::stutter_score::snapshot(fps);
+    nlohmann::json out;
+    out["status"] = true;
+    out["score"] = s.score;
+    out["hitches"] = s.hitches;
+    out["samples"] = s.samples;
+    out["avg_interval_us"] = s.avg_interval_us;
+    out["max_interval_us"] = s.max_interval_us;
+    out["fps"] = s.fps;
+    send_response(response, out);
+  }
+
+  /**
+   * @brief GET /api/solarflare/heatmap
+   *
+   * 60-second RTT/loss bucketed per target. The dashboard renders
+   * this as a colour-coded row of cells.
+   */
+  void sfGetHeatmap(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) return;
+    auto h = solarflare::network_heatmap::snapshot();
+    nlohmann::json out;
+    out["status"] = true;
+    nlohmann::json targets = nlohmann::json::array();
+    for (auto &t : h.targets) {
+      nlohmann::json tj;
+      tj["name"] = t.name;
+      tj["score"] = t.score;
+      nlohmann::json buckets = nlohmann::json::array();
+      for (auto &b : t.buckets) {
+        buckets.push_back({
+          {"max_rtt_ms", b.max_rtt_ms},
+          {"lost", b.lost},
+          {"sent", b.sent}
+        });
+      }
+      tj["buckets"] = buckets;
+      targets.push_back(tj);
+    }
+    out["targets"] = targets;
+    send_response(response, out);
+  }
+
   void start() {
     platf::set_thread_name("confighttp");
     const auto shutdown_event = mail::man->event<bool>(mail::shutdown);
@@ -2205,6 +2283,9 @@ namespace confighttp {
     server.resource["^/api/solarflare/performance/revert$"]["POST"] = sfRevertPerformance;
     server.resource["^/api/solarflare/allm/on$"]["POST"] = sfAllmOn;
     server.resource["^/api/solarflare/allm/off$"]["POST"] = sfAllmOff;
+    server.resource["^/api/solarflare/predictive-abr$"]["GET"] = sfGetPredictiveAbr;
+    server.resource["^/api/solarflare/stutter-score$"]["GET"] = sfGetStutterScore;
+    server.resource["^/api/solarflare/heatmap$"]["GET"] = sfGetHeatmap;
 
     // SolarFlare web pages.
     server.resource["^/dashboard/?$"]["GET"] = page_handler("dashboard.html");

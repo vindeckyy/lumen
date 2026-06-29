@@ -277,6 +277,12 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/solarflare/cec.cpp"
         "${CMAKE_SOURCE_DIR}/src/solarflare/latency_budget.h"
         "${CMAKE_SOURCE_DIR}/src/solarflare/latency_budget.cpp"
+        "${CMAKE_SOURCE_DIR}/src/solarflare/predictive_abr.h"
+        "${CMAKE_SOURCE_DIR}/src/solarflare/predictive_abr.cpp"
+        "${CMAKE_SOURCE_DIR}/src/solarflare/stutter_score.h"
+        "${CMAKE_SOURCE_DIR}/src/solarflare/stutter_score.cpp"
+        "${CMAKE_SOURCE_DIR}/src/solarflare/network_heatmap.h"
+        "${CMAKE_SOURCE_DIR}/src/solarflare/network_heatmap.cpp"
         "${CMAKE_SOURCE_DIR}/src/solarflare/platform/runtime_config.h"
         "${CMAKE_SOURCE_DIR}/src/solarflare/platform/runtime_config.cpp"
         ${PLATFORM_TARGET_FILES})

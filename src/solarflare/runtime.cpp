@@ -18,11 +18,14 @@
 #include "solarflare/app_profiler.h"
 #include "solarflare/health_monitor.h"
 #include "solarflare/inspector.h"
+#include "solarflare/network_heatmap.h"
 #include "solarflare/network_probe.h"
 #include "solarflare/performance.h"
 #include "solarflare/platform/runtime_config.h"
+#include "solarflare/predictive_abr.h"
 #include "solarflare/runtime.h"
 #include "solarflare/session_recorder.h"
+#include "solarflare/stutter_score.h"
 #include "solarflare/telemetry.h"
 
 namespace solarflare {
@@ -32,13 +35,19 @@ namespace solarflare {
     bool init() {
       if (!telemetry::init()) return false;
       adaptive_bitrate::init(platform::make_adaptive_bitrate_config());
+      // predictive_abr subscribes to the same telemetry observer
+      // slot as adaptive_bitrate; whoever runs last wins. We run
+      // predictive last so it takes precedence on a fresh install.
+      predictive_abr::init(predictive_cfg_t {});
       health_monitor::init(platform::make_health_monitor_config());
       network_probe::init();
+      network_heatmap::init();
       session_recorder::init(platform::make_session_recorder_config());
       app_profiler::init(platform::make_app_profiler_config());
       inspector::init();
       performance::init(perf_cfg_t {});
-      BOOST_LOG(info) << "SolarFlare runtime: up";
+      stutter_score::reset();
+      BOOST_LOG(info) << "SolarFlare runtime: up (with predictive ABR + heatmap + stutter)";
       return true;
     }
 
@@ -46,8 +55,10 @@ namespace solarflare {
       performance::shutdown();
       app_profiler::shutdown();
       session_recorder::shutdown();
+      network_heatmap::shutdown();
       network_probe::shutdown();
       health_monitor::shutdown();
+      predictive_abr::shutdown();
       adaptive_bitrate::shutdown();
       telemetry::shutdown();
     }
