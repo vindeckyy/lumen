@@ -356,7 +356,7 @@ namespace safe {
     std::mutex _lock;
     std::condition_variable _cv;
 
-    // ponytail: std::deque gives O(1) pop_front instead of std::vector's O(n)
+    // std::deque gives O(1) pop_front instead of std::vector's O(n)
     // erase(begin()). queue_t is the cross-cutting hot path for audio packets,
     // video packets, capture sessions, network messages, and pairing certs —
     // every pop was shifting the whole queue. Ceiling moved: same thread-safety,

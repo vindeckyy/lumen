@@ -1,0 +1,60 @@
+<!--
+  metrics.html — Lumen live session metrics dashboard.
+  Polls /api/v1/sessions every second, renders three canvas time-series
+  charts (FPS, bitrate, RTT) and a status grid. No JS framework, no chart
+  library — canvas + setInterval, all in one ~150-line file.
+
+  Refresh every 1s instead of WebSocket. Polling is fewer moving
+  parts (no separate WS server, no reconnect logic) and the payload is
+  ~1 KB. If a session ever needs >4 Hz updates, switch to WS then.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Lumen · Live Metrics</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="css/lumen.css" />
+  <link rel="icon" type="image/x-icon" href="/images/lumen.ico" />
+</head>
+<body>
+  <main id="lumen-app">
+    <header class="lumen-navbar">
+      <h1>Lumen · Live Metrics</h1>
+      <p id="status" class="lumen-status">connecting…</p>
+    </header>
+
+    <section class="lumen-grid">
+      <div class="lumen-card">
+        <h2>FPS</h2>
+        <p class="lumen-stat" id="stat-fps">–</p>
+        <canvas id="chart-fps" width="320" height="120"></canvas>
+      </div>
+      <div class="lumen-card">
+        <h2>Bitrate</h2>
+        <p class="lumen-stat"><span id="stat-bitrate">–</span> kbps</p>
+        <canvas id="chart-bitrate" width="320" height="120"></canvas>
+      </div>
+      <div class="lumen-card">
+        <h2>RTT</h2>
+        <p class="lumen-stat"><span id="stat-rtt">–</span> ms</p>
+        <canvas id="chart-rtt" width="320" height="120"></canvas>
+      </div>
+    </section>
+
+    <section class="lumen-card">
+      <h2>Sessions</h2>
+      <table class="lumen-table">
+        <thead>
+          <tr><th>ID</th><th>App</th><th>Client</th><th>FPS</th><th>kbps</th><th>RTT</th><th>Dropped</th></tr>
+        </thead>
+        <tbody id="session-rows">
+          <tr><td colspan="7" class="lumen-empty">no active sessions</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="js/liveMetrics.js"></script>
+</body>
+</html>

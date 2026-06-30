@@ -129,9 +129,9 @@ onMounted(() => {
           <Sprout :size="18" class="theme-icon icon"></Sprout>
           {{ $t('navbar.theme_rose_pine_dawn') }}
         </button>
-        <button type="button" class="dropdown-item d-flex align-items-center" data-bs-theme-value="sunshine" aria-pressed="false">
+        <button type="button" class="dropdown-item d-flex align-items-center" data-bs-theme-value="lumen" aria-pressed="false">
           <Sunrise :size="18" class="theme-icon icon"></Sunrise>
-          {{ $t('navbar.theme_sunshine') }}
+          {{ $t('navbar.theme_lumen') }}
         </button>
         <button type="button" class="dropdown-item d-flex align-items-center" data-bs-theme-value="indigo" aria-pressed="false">
           <Sparkles :size="18" class="theme-icon icon"></Sparkles>

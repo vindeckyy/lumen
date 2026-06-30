@@ -1,5 +1,5 @@
 # Building
-Sunshine binaries are built using [CMake](https://cmake.org) and requires `cmake` > 3.25.
+Lumen binaries are built using [CMake](https://cmake.org) and requires `cmake` > 3.25.
 
 ## Building Locally
 
@@ -16,7 +16,7 @@ It is recommended to use one of the following compilers:
 
 #### FreeBSD
 > [!CAUTION]
-> Sunshine support for FreeBSD is experimental and may be incomplete or not work as expected
+> Lumen support for FreeBSD is experimental and may be incomplete or not work as expected
 
 ##### Install dependencies
 ```sh
@@ -50,23 +50,23 @@ pkg install -y \
 
 #### Linux
 Dependencies vary depending on the distribution. You can reference our
-[linux_build.sh](https://github.com/LizardByte/Sunshine/blob/master/scripts/linux_build.sh) script for a list of
+[linux_build.sh](https://github.com/LizardByte/Lumen/blob/master/scripts/linux_build.sh) script for a list of
 dependencies we use in Debian-based, Fedora-based and Arch-based distributions. Please submit a PR if you would like to extend the
 script to support other distributions.
 
 ##### KMS Capture
-If you are using KMS, patching the Sunshine binary with `setcap` is required. Some post-install scripts handle this. If building
+If you are using KMS, patching the Lumen binary with `setcap` is required. Some post-install scripts handle this. If building
 from source and using the binary directly, this will also work:
 
 ```bash
-sudo cp build/sunshine /tmp
-sudo setcap cap_sys_admin,cap_sys_nice+p /tmp/sunshine
-sudo getcap /tmp/sunshine
-sudo mv /tmp/sunshine build/sunshine
+sudo cp build/lumen /tmp
+sudo setcap cap_sys_admin,cap_sys_nice+p /tmp/lumen
+sudo getcap /tmp/lumen
+sudo mv /tmp/lumen build/lumen
 ```
 
 ##### CUDA Toolkit
-Sunshine requires CUDA Toolkit for NVFBC capture. There are two caveats to CUDA:
+Lumen requires CUDA Toolkit for NVFBC capture. There are two caveats to CUDA:
 
 1. The version installed depends on the version of GCC.
 2. The version of CUDA you use will determine compatibility with various GPU generations.
@@ -185,8 +185,8 @@ For ARM64: To build frontend, you also need to install [Node.JS](https://nodejs.
 Ensure [git](https://git-scm.com) is installed on your system, then clone the repository using the following command:
 
 ```bash
-git clone https://github.com/lizardbyte/sunshine.git --recurse-submodules
-cd sunshine
+git clone https://github.com/lizardbyte/lumen.git --recurse-submodules
+cd lumen
 mkdir build
 ```
 
@@ -199,7 +199,7 @@ ninja -C build
 
 > [!TIP]
 > Available build options can be found in
-> [options.cmake](https://github.com/LizardByte/Sunshine/blob/master/cmake/prep/options.cmake).
+> [options.cmake](https://github.com/LizardByte/Lumen/blob/master/cmake/prep/options.cmake).
 
 ### Package
 

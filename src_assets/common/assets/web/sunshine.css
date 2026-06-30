@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Sunshine UI - Modern Design System
+   Lumen UI - Modern Design System
    ========================================================================== */
 
 /* Hide pages while localization is loading */
@@ -754,8 +754,8 @@
     --navbar-text-muted: rgba(255, 255, 255, 0.9);
 }
 
-/* Sunshine Theme - Warm and bright inspired by sunlight */
-[data-theme="sunshine"] {
+/* Lumen Theme - Warm and bright inspired by sunlight */
+[data-theme="lumen"] {
     --color-primary: #F59E0B;
     --color-primary-hover: #D97706;
     --color-primary-light: #FEF3C7;
@@ -1048,22 +1048,22 @@ body {
    Navbar Styles
    ========================================================================== */
 
-.navbar-sunshine {
+.navbar-lumen {
     background: var(--navbar-bg) !important;
     box-shadow: var(--shadow-md);
     border: none;
     transition: all var(--transition-base);
 }
 
-.navbar-sunshine .navbar-brand {
+.navbar-lumen .navbar-brand {
     transition: transform var(--transition-fast);
 }
 
-.navbar-sunshine .navbar-brand:hover {
+.navbar-lumen .navbar-brand:hover {
     transform: scale(1.05);
 }
 
-.navbar-sunshine .nav-link {
+.navbar-lumen .nav-link {
     color: var(--navbar-text-muted) !important;
     font-weight: 500;
     padding: 0.5rem 1rem !important;
@@ -1075,29 +1075,29 @@ body {
     gap: 0.5rem;
 }
 
-.navbar-sunshine .nav-link:hover {
+.navbar-lumen .nav-link:hover {
     color: var(--navbar-text) !important;
     background-color: rgba(255, 255, 255, 0.1);
     transform: translateY(-1px);
 }
 
-.navbar-sunshine .nav-link.active {
+.navbar-lumen .nav-link.active {
     color: var(--navbar-text) !important;
     background-color: rgba(255, 255, 255, 0.15);
     font-weight: 600;
 }
 
-.navbar-sunshine .nav-link.dropdown-toggle.show {
+.navbar-lumen .nav-link.dropdown-toggle.show {
     color: var(--navbar-text) !important;
     background-color: rgba(255, 255, 255, 0.15);
 }
 
-.navbar-sunshine .navbar-toggler {
+.navbar-lumen .navbar-toggler {
     color: var(--navbar-text) !important;
     border-color: rgba(255, 255, 255, 0.2) !important;
 }
 
-.navbar-sunshine .navbar-toggler:focus {
+.navbar-lumen .navbar-toggler:focus {
     box-shadow: 0 0 0 0.25rem rgba(255, 255, 255, 0.15);
 }
 
@@ -1138,7 +1138,7 @@ p {
    Card Styles
    ========================================================================== */
 
-.card-sunshine {
+.card-lumen {
     background-color: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
@@ -1147,16 +1147,16 @@ p {
     overflow: hidden;
 }
 
-.card-sunshine:hover {
+.card-lumen:hover {
     box-shadow: var(--shadow-md);
     transform: translateY(-2px);
 }
 
-.card-sunshine .card-body {
+.card-lumen .card-body {
     padding: var(--spacing-xl);
 }
 
-.card-sunshine .card-header {
+.card-lumen .card-header {
     background-color: var(--color-bg-subtle);
     border-bottom: 1px solid var(--color-border);
     padding: var(--spacing-lg) var(--spacing-xl);
@@ -2076,7 +2076,7 @@ p {
         line-height: 2rem;
     }
 
-    .card-sunshine .card-body,
+    .card-lumen .card-body,
     .card .card-body {
         padding: var(--spacing-lg);
     }

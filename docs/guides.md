@@ -9,7 +9,7 @@ Feel free to contribute your own tips and trips by making a PR to
 
 | Previous                                |                                        Next |
 |:----------------------------------------|--------------------------------------------:|
-| [Awesome-Sunshine](awesome_sunshine.md) | [Performance Tuning](performance_tuning.md) |
+| [Awesome-Lumen](awesome_lumen.md) | [Performance Tuning](performance_tuning.md) |
 
 </div>
 

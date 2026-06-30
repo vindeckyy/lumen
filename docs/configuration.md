@@ -8,14 +8,14 @@ By providing the host authority (URI + port), you can easily open each configura
 @endhtmlonly
 }
 
-Sunshine will work with the default settings for most users. In some cases you may want to configure Sunshine further.
+Lumen will work with the default settings for most users. In some cases you may want to configure Lumen further.
 
 The default location for the configuration file is listed below. You can use another location if you
-choose, by passing in the full configuration file path as the first argument when you start Sunshine.
+choose, by passing in the full configuration file path as the first argument when you start Lumen.
 
 **Example**
 ```bash
-sunshine ~/sunshine_config.conf
+lumen ~/lumen_config.conf
 ```
 
 The default location of the `apps.json` is the same as the configuration file. You can use a custom
@@ -26,12 +26,12 @@ location by modifying the configuration file.
 | OS      | Location                                        |
 |---------|-------------------------------------------------|
 | Docker  | @code{}/config@endcode                          |
-| FreeBSD | @code{}~/.config/sunshine@endcode               |
-| Linux   | @code{}~/.config/sunshine@endcode               |
-| macOS   | @code{}~/.config/sunshine@endcode               |
-| Windows | @code{}%ProgramFiles%\\Sunshine\\config@endcode |
+| FreeBSD | @code{}~/.config/lumen@endcode               |
+| Linux   | @code{}~/.config/lumen@endcode               |
+| macOS   | @code{}~/.config/lumen@endcode               |
+| Windows | @code{}%ProgramFiles%\\Lumen\\config@endcode |
 
-Although it is recommended to use the configuration UI, it is possible manually configure Sunshine by
+Although it is recommended to use the configuration UI, it is possible manually configure Lumen by
 editing the `conf` file in a text editor. Use the examples as reference.
 
 ## General
@@ -42,7 +42,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Description</td>
         <td colspan="2">
-            The locale used for Sunshine's user interface.
+            The locale used for Lumen's user interface.
         </td>
     </tr>
     <tr>
@@ -140,7 +140,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
-### sunshine_name
+### lumen_name
 
 <table>
     <tr>
@@ -156,7 +156,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Example</td>
         <td colspan="2">@code{}
-            sunshine_name = Sunshine
+            lumen_name = Lumen
             @endcode</td>
     </tr>
 </table>
@@ -245,7 +245,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Description</td>
         <td colspan="2">
-            Whether to be notified of new pre-release versions of Sunshine.
+            Whether to be notified of new pre-release versions of Lumen.
         </td>
     </tr>
     <tr>
@@ -597,7 +597,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Description</td>
         <td colspan="2">It may be possible that you cannot send the Windows Key from Moonlight directly. In those cases it may be useful to
-            make Sunshine think the Right Alt key is the Windows key.
+            make Lumen think the Right Alt key is the Windows key.
             </td>
     </tr>
     <tr>
@@ -643,7 +643,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Description</td>
         <td colspan="2">
-            When enabled, Sunshine will pass through high resolution scroll events from Moonlight clients.
+            When enabled, Lumen will pass through high resolution scroll events from Moonlight clients.
             <br>
             This can be useful to disable for older applications that scroll too fast with high resolution scroll
             events.
@@ -669,7 +669,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Description</td>
         <td colspan="2">
-            When enabled, Sunshine will pass through native pen/touch events from Moonlight clients.
+            When enabled, Lumen will pass through native pen/touch events from Moonlight clients.
             <br>
             This can be useful to disable for older applications without native pen/touch support.
         </td>
@@ -754,7 +754,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
             <br>
             **macOS:**
             <br>
-            Sunshine can only access microphones on macOS due to system limitations.
+            Lumen can only access microphones on macOS due to system limitations.
             To stream system audio use
             [Soundflower](https://github.com/mattingalls/Soundflower) or
             [BlackHole](https://github.com/ExistentialAudio/BlackHole).
@@ -764,7 +764,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
             <br>
             Enter the following command in command prompt or PowerShell.
             @code{}
-            %ProgramFiles%\Sunshine\tools\audio-info.exe
+            %ProgramFiles%\Lumen\tools\audio-info.exe
             @endcode
             If you have multiple audio devices with identical names, use the Device ID instead.
             }
@@ -774,7 +774,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
     <tr>
         <td>Default</td>
-        <td colspan="2">Sunshine will select the default audio device.</td>
+        <td colspan="2">Lumen will select the default audio device.</td>
     </tr>
     <tr>
         <td>Example (FreeBSD/Linux)</td>
@@ -802,7 +802,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Description</td>
         <td colspan="2">
-            The audio device that's virtual, like Steam Streaming Speakers. This allows Sunshine to stream audio,
+            The audio device that's virtual, like Steam Streaming Speakers. This allows Lumen to stream audio,
             while muting the speakers.
             @tip{See [audio_sink](#audio_sink)!}
             @tip{These are some options for virtual sound devices.
@@ -893,7 +893,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
             vainfo --display drm --device /dev/dri/renderD129 | \
               grep -E "((VAProfileH264High|VAProfileHEVCMain|VAProfileHEVCMain10).*VAEntrypointEncSlice)|Driver version"
             @endcode
-            To be supported by Sunshine, it needs to have at the very minimum:
+            To be supported by Lumen, it needs to have at the very minimum:
             `VAProfileH264High   : VAEntrypointEncSlice`
             <br>
             <br>
@@ -901,7 +901,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
             <br>
             Enter the following command in command prompt or PowerShell.
             @code{}
-            %ProgramFiles%\Sunshine\tools\dxgi-info.exe
+            %ProgramFiles%\Lumen\tools\dxgi-info.exe
             @endcode
             For hybrid graphics systems, DXGI reports the outputs are connected to whichever graphics
             adapter that the application is configured to use, so it's not a reliable indicator of how the
@@ -911,7 +911,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
     <tr>
         <td>Default</td>
-        <td colspan="2">Sunshine will select the default video card.</td>
+        <td colspan="2">Lumen will select the default video card.</td>
     </tr>
     <tr>
         <td>Example (FreeBSD/Linux)</td>
@@ -939,7 +939,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
             <br>
             **FreeBSD/Linux:**
             <br>
-            During Sunshine startup, you should see the list of detected displays:
+            During Lumen startup, you should see the list of detected displays:
             @code{}
             Info: Detecting displays
             Info: Detected display: DVI-D-0 (id: 0) connected: false
@@ -953,7 +953,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
             <br>
             **macOS:**
             <br>
-            During Sunshine startup, you should see the list of detected displays:
+            During Lumen startup, you should see the list of detected displays:
             @code{}
             Info: Detecting displays
             Info: Detected display: Monitor-0 (id: 3) connected: true
@@ -964,7 +964,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
             <br>
             **Windows:**
             <br>
-            During Sunshine startup, you should see the list of detected displays:
+            During Lumen startup, you should see the list of detected displays:
             @code{}
             Info: Currently available display devices:
             [
@@ -977,7 +977,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
               {
                 "device_id": "{77f67f3e-754f-5d31-af64-ee037e18100a}",
                 "display_name": "",
-                "friendly_name": "SunshineHDR",
+                "friendly_name": "LumenHDR",
                 "info": null
               },
               {
@@ -1019,7 +1019,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
     <tr>
         <td>Default</td>
-        <td colspan="2">Sunshine will select the default display.</td>
+        <td colspan="2">Lumen will select the default display.</td>
     </tr>
     <tr>
         <td>Example (FreeBSD/Linux)</td>
@@ -1241,8 +1241,8 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Description</td>
         <td colspan="2">
-            When using virtual display device (VDD) for streaming, it might incorrectly display HDR color. Sunshine can try to mitigate this issue, by turning HDR off and then on again.<br>
-            If the value is set to 0, the workaround is disabled (default). If the value is between 0 and 3000 milliseconds, Sunshine will turn off HDR, wait for the specified amount of time and then turn HDR on again. The recommended delay time is around 500 milliseconds in most cases.<br>
+            When using virtual display device (VDD) for streaming, it might incorrectly display HDR color. Lumen can try to mitigate this issue, by turning HDR off and then on again.<br>
+            If the value is set to 0, the workaround is disabled (default). If the value is between 0 and 3000 milliseconds, Lumen will turn off HDR, wait for the specified amount of time and then turn HDR on again. The recommended delay time is around 500 milliseconds in most cases.<br>
             DO NOT use this workaround unless you actually have issues with HDR as it directly impacts stream start time!
             @note{This option works independently of [dd_hdr_option](#dd_hdr_option)}
             @note{Applies to Windows only.}
@@ -1402,7 +1402,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Description</td>
         <td colspan="2">
-            The maximum bitrate (in Kbps) that Sunshine will encode the stream at. If set to 0, it will always use the bitrate requested by Moonlight.
+            The maximum bitrate (in Kbps) that Lumen will encode the stream at. If set to 0, it will always use the bitrate requested by Moonlight.
         </td>
     </tr>
     <tr>
@@ -1425,7 +1425,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Description</td>
         <td colspan="2">
-            Sunshine tries to save bandwidth when content on screen is static or a low framerate. Because many clients expect a constant stream of video frames, a certain amount of duplicate frames are sent when this happens. This setting controls the lowest effective framerate a stream can reach.
+            Lumen tries to save bandwidth when content on screen is static or a low framerate. Because many clients expect a constant stream of video frames, a certain amount of duplicate frames are sent when this happens. This setting controls the lowest effective framerate a stream can reach.
         </td>
     </tr>
     <tr>
@@ -1453,7 +1453,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Description</td>
         <td colspan="2">
-            Sunshine will attempt to open ports for streaming over the internet.
+            Lumen will attempt to open ports for streaming over the internet.
         </td>
     </tr>
     <tr>
@@ -1476,7 +1476,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Description</td>
         <td colspan="2">
-            Set the address family that Sunshine will use.
+            Set the address family that Lumen will use.
         </td>
     </tr>
     <tr>
@@ -1508,8 +1508,8 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Description</td>
         <td colspan="2">
-            Set the IP address to bind Sunshine to. This is useful when you have multiple network interfaces
-            and want to restrict Sunshine to a specific one. If not set, Sunshine will bind to all available
+            Set the IP address to bind Lumen to. This is useful when you have multiple network interfaces
+            and want to restrict Lumen to a specific one. If not set, Lumen will bind to all available
             interfaces (0.0.0.0 for IPv4 or :: for IPv6).
             <br><br>
             <strong>Note:</strong> The address must be valid for the system and must match the address family
@@ -1548,7 +1548,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Description</td>
         <td colspan="2">
-            Set the family of ports used by Sunshine.
+            Set the family of ports used by Lumen.
             Changing this value will offset other ports as shown in config UI.
         </td>
     </tr>
@@ -1641,7 +1641,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Description</td>
         <td colspan="2">
-            If no external IP address is given, Sunshine will attempt to automatically detect external ip-address.
+            If no external IP address is given, Lumen will attempt to automatically detect external ip-address.
         </td>
     </tr>
     <tr>
@@ -1852,13 +1852,13 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Default</td>
         <td colspan="2">@code{}
-            sunshine_state.json
+            lumen_state.json
             @endcode</td>
     </tr>
     <tr>
         <td>Example</td>
         <td colspan="2">@code{}
-            credentials_file = sunshine_state.json
+            credentials_file = lumen_state.json
             @endcode</td>
     </tr>
 </table>
@@ -1869,19 +1869,19 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Description</td>
         <td colspan="2">
-            The path where the Sunshine log is stored.
+            The path where the Lumen log is stored.
         </td>
     </tr>
     <tr>
         <td>Default</td>
         <td colspan="2">@code{}
-            sunshine.log
+            lumen.log
             @endcode</td>
     </tr>
     <tr>
         <td>Example</td>
         <td colspan="2">@code{}
-            log_path = sunshine.log
+            log_path = lumen.log
             @endcode</td>
     </tr>
 </table>
@@ -1942,19 +1942,19 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Description</td>
         <td colspan="2">
-            The file where current state of Sunshine is stored.
+            The file where current state of Lumen is stored.
         </td>
     </tr>
     <tr>
         <td>Default</td>
         <td colspan="2">@code{}
-            sunshine_state.json
+            lumen_state.json
             @endcode</td>
     </tr>
     <tr>
         <td>Example</td>
         <td colspan="2">@code{}
-            file_state = sunshine_state.json
+            file_state = lumen_state.json
             @endcode</td>
     </tr>
 </table>
@@ -2136,7 +2136,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Default</td>
         <td colspan="2">Automatic.
-            Sunshine will use the first capture method available in the order of the table above.</td>
+            Lumen will use the first capture method available in the order of the table above.</td>
     </tr>
     <tr>
         <td>Example</td>
@@ -2159,7 +2159,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
     <tr>
         <td>kms</td>
-        <td>DRM/KMS screen capture from the kernel. This requires that Sunshine has `cap_sys_admin` capability.
+        <td>DRM/KMS screen capture from the kernel. This requires that Lumen has `cap_sys_admin` capability.
             @note{Applies to Linux only.}</td>
     </tr>
     <tr>
@@ -2181,7 +2181,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
         <td>wgc</td>
         <td>(beta feature) Use Windows.Graphics.Capture to capture the display.
             @note{Applies to Windows only.}
-            @attention{This capture method is not compatible with the Sunshine service.}</td>
+            @attention{This capture method is not compatible with the Lumen service.}</td>
     </tr>
 </table>
 
@@ -2196,7 +2196,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
     <tr>
         <td>Default</td>
-        <td colspan="2">Sunshine will use the first encoder that is available.</td>
+        <td colspan="2">Lumen will use the first encoder that is available.</td>
     </tr>
     <tr>
         <td>Example</td>
@@ -2363,7 +2363,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
         <td>Description</td>
         <td colspan="2">
             Single-frame VBV/HRD percentage increase.
-            By default Sunshine uses single-frame VBV/HRD, which means any encoded video frame size is not expected to
+            By default Lumen uses single-frame VBV/HRD, which means any encoded video frame size is not expected to
             exceed requested bitrate divided by requested frame rate. Relaxing this restriction can be beneficial and
             act as low-latency variable bitrate, but may also lead to packet loss if the network doesn't have buffer
             headroom to handle bitrate spikes. Maximum accepted value is 400, which corresponds to 5x increased
@@ -2465,7 +2465,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
         <td>Description</td>
         <td colspan="2">
             Adaptive P-State algorithm which NVIDIA drivers employ doesn't work well with low latency streaming,
-            so Sunshine requests high power mode explicitly.
+            so Lumen requests high power mode explicitly.
             @note{This option only applies when using NVENC [encoder](#encoder).}
             @warning{Disabling this is not recommended since this can lead to significantly increased encoding latency.}
             @note{Applies to Windows only.}
@@ -2491,9 +2491,9 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Description</td>
         <td colspan="2">
-            Sunshine can't capture fullscreen OpenGL and Vulkan programs at full frame rate unless they present on
-            top of DXGI. With this option enabled Sunshine changes global Vulkan/OpenGL present method to
-            "Prefer layered on DXGI Swapchain". This is system-wide setting that is reverted on Sunshine program exit.
+            Lumen can't capture fullscreen OpenGL and Vulkan programs at full frame rate unless they present on
+            top of DXGI. With this option enabled Lumen changes global Vulkan/OpenGL present method to
+            "Prefer layered on DXGI Swapchain". This is system-wide setting that is reverted on Lumen program exit.
             @note{This option only applies when using NVENC [encoder](#encoder).}
             @note{Applies to Windows only.}
         </td>
@@ -3266,11 +3266,11 @@ editing the `conf` file in a text editor. Use the examples as reference.
   [TOC]
 </details>
 
-## SolarFlare Fork
+## lumen Fork
 
-@admonition{ Fork-only | These options exist only in the SolarFlare fork
+@admonition{ Fork-only | These options exist only in the lumen fork
 ([vindeckyy/Solar-Flare](https://github.com/vindeckyy/Solar-Flare)).
-They are not part of upstream LizardByte/Sunshine and will be silently
+They are not part of upstream LizardByte/Lumen and will be silently
 ignored if set on a vanilla upstream install. Defaults match the
 pre-config-fork hardcoded values, so a vanilla install is bit-for-bit
 identical to a build without this configuration section. }

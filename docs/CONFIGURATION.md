@@ -1,10 +1,10 @@
-# SolarFlare fork configuration
+# lumen fork configuration
 
-The SolarFlare fork adds five Linux-only tunables that let you dial
+The lumen fork adds five Linux-only tunables that let you dial
 the CachyOS local-LAN fast path in or out without rebuilding. All five
-live under the `solarflare_t` struct in `src/config.h` and are read
-from the same `~/.config/sunshine/sunshine.conf` file as the upstream
-options. They appear in `sunshine --version` (with
+live under the `lumen_t` struct in `src/config.h` and are read
+from the same `~/.config/lumen/lumen.conf` file as the upstream
+options. They appear in `lumen --version` (with
 `min_log_level = 1`) as `config: '...' = ...` lines.
 
 This document describes only the **fork-specific** keys. The full
@@ -26,7 +26,7 @@ Each one is opt-out — setting it back to its "fall back to upstream"
 choice (`busy_poll_us = 0`, `rate_cap_pct = 80` is already upstream's
 default, `enet_4mib_buffer = false`, `pipewire_latency_ms = 8` is
 upstream's default, `cpu_pinning = false`) effectively undoes the
-SolarFlare tuning for that subsystem without a rebuild. This is
+lumen tuning for that subsystem without a rebuild. This is
 useful if you want to A/B-test the patch on a per-knob basis.
 
 ## Detailed behaviour
@@ -74,7 +74,7 @@ If `true` (default), grow the ENet UDP socket's send/recv buffers to
 
 `SO_RCVBUFFORCE` / `SO_SNDBUFFORCE` are tried first — these let us
 exceed `rmem_max`/`wmem_max` without sysctl changes (they require
-`CAP_NET_ADMIN`, which Sunshine doesn't run with, so the call
+`CAP_NET_ADMIN`, which Lumen doesn't run with, so the call
 silently no-ops if it fails). The code then falls back to plain
 `SO_RCVBUF`/`SO_SNDBUF` for the rmem_max-limited path.
 
@@ -117,7 +117,7 @@ still applies.
 If `false`, only the upstream `nice -15` is applied. Use this if:
 
 - You're running under `systemd-run --user --scope` and the SCHED_RR
-  call is producing noisy warnings in `journalctl --user -u sunshine`.
+  call is producing noisy warnings in `journalctl --user -u lumen`.
 - You're on a Zen 1 / Bulldozer-era CPU where pinning to a single
   physical core actually hurts throughput more than it helps.
 
@@ -145,7 +145,7 @@ pipewire_latency_ms = 1
 cpu_pinning = false
 EOF
 
-sunshine /tmp/sf-test.conf
+lumen /tmp/sf-test.conf
 # Look for these in the first ~20 log lines:
 #   config: 'busy_poll_us' = 0
 #   config: 'rate_cap_pct' = 95
@@ -159,19 +159,19 @@ sunshine /tmp/sf-test.conf
 
 ## Verification on an existing install
 
-After pulling a new SolarFlare build:
+After pulling a new lumen build:
 
-1. `sunshine --version` — should still exit 0 and show
-   `Sunshine version: ... commit: ...` plus the publisher metadata.
+1. `lumen --version` — should still exit 0 and show
+   `Lumen version: ... commit: ...` plus the publisher metadata.
    No `FATAL` lines.
-2. `grep -c solarflare_t src/config.h` — should print `1` (the struct
+2. `grep -c lumen_t src/config.h` — should print `1` (the struct
    definition) plus `5` field declarations. `grep -c
-   config::solarflare src/network.cpp src/stream.cpp
+   config::lumen src/network.cpp src/stream.cpp
    src/platform/linux/misc.cpp src/platform/linux/pipewire.cpp` should
    total at least `5`.
 3. The web UI at `https://localhost:47990` should NOT show the five
    fork tunables (they're intentionally not exposed; edit
-   `~/.config/sunshine/sunshine.conf` directly if you want to change
+   `~/.config/lumen/lumen.conf` directly if you want to change
    them). Everything else in the Configuration tab should look
    identical to upstream.
 

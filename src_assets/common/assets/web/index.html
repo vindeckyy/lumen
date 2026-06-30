@@ -146,7 +146,7 @@
     </div>
 
     <footer class="solarflare-footer">
-      <span>Powered by <a href="https://github.com/vindeckyy/Solar-Flare" target="_blank" rel="noopener">SolarFlare</a> &middot; a derivative of <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">LizardByte/Sunshine</a></span>
+      <span>Powered by <a href="https://github.com/vindeckyy/Solar-Flare" target="_blank" rel="noopener">SolarFlare</a> &middot; a derivative of <a href="https://github.com/LizardByte/Lumen" target="_blank" rel="noopener">LizardByte/Lumen</a></span>
     </footer>
   </div>
 </body>
@@ -157,7 +157,7 @@
   import { initApp } from './init'
   import Navbar from './Navbar.vue'
   import ResourceCard from './ResourceCard.vue'
-  import SunshineVersion from './sunshine_version'
+  import LumenVersion from './lumen_version'
   import {
     AlertCircle,
     AlertTriangle,
@@ -211,11 +211,11 @@
         this.notifyPreReleases = config.notify_pre_releases;
         this.platform = config.platform;
         this.controllerEnabled = config.controller !== "disabled";
-        this.version = new SunshineVersion(null, config.version);
+        this.version = new LumenVersion(null, config.version);
         console.log("Version: ", this.version.version)
-        this.githubVersion = new SunshineVersion(await fetch("https://api.github.com/repos/vindeckyy/Solar-Flare/releases/latest").then((r) => r.json()), null);
+        this.githubVersion = new LumenVersion(await fetch("https://api.github.com/repos/vindeckyy/Solar-Flare/releases/latest").then((r) => r.json()), null);
         console.log("GitHub Version: ", this.githubVersion.version)
-        this.preReleaseVersion = new SunshineVersion((await fetch("https://api.github.com/repos/vindeckyy/Solar-Flare/releases").then((r) => r.json())).find(release => release.prerelease), null);
+        this.preReleaseVersion = new LumenVersion((await fetch("https://api.github.com/repos/vindeckyy/Solar-Flare/releases").then((r) => r.json())).find(release => release.prerelease), null);
         console.log("Pre-Release Version: ", this.preReleaseVersion.version)
 
         // Fetch ViGEmBus status only on Windows when controller is enabled

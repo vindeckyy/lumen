@@ -31,6 +31,8 @@
 // local includes
 #include "config.h"
 #include "confighttp.h"
+#include "lumen_metrics.h"
+#include "lumen_session.h"
 #include "crypto.h"
 #include "display_device.h"
 #include "file_handler.h"
@@ -1721,6 +1723,80 @@ namespace confighttp {
     }
   }
 
+  /**
+   * @brief Lumen build version + capability flags.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   *
+   * @api_examples{/api/v1/system/version| GET| null}
+   */
+  void getLumenVersion(const resp_https_t &response, const req_https_t &request) {
+    // Build system should define LUMEN_VERSION (mirrors PROJECT_VERSION);
+    // the literal below is the fallback when compile_definitions aren't wired.
+    nlohmann::json output_tree;
+    output_tree["name"] = "lumen";
+    output_tree["version"] = LUMEN_VERSION_STRING;
+    output_tree["protocol"] = "moonlight-7.1.0";
+    output_tree["build"] = LUMEN_BUILD_DESC;
+    output_tree["features"] = {
+      {"metrics", true},
+      {"nv_preset", true},
+      {"pipewire_tuning", true},
+    };
+    send_response(response, output_tree);
+  }
+
+  /**
+   * @brief List all currently-active streaming sessions as JSON.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   *
+   * @api_examples{/api/v1/sessions| GET| null}
+   */
+  void listLumenSessions(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) {
+      return;
+    }
+    print_req(request);
+    send_response(response, nlohmann::json::parse(lumen::session::list_active_json()));
+  }
+
+  /**
+   * @brief Get a single session's metrics by id.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   *
+   * @api_examples{/api/v1/sessions/{id}| GET| null}
+   */
+  void getLumenSession(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) {
+      return;
+    }
+    print_req(request);
+    auto id = request->path_match[1];
+    auto body = lumen::session::get_json(id);
+    if (body.empty()) {
+      bad_request(response, request, "session not found");
+      return;
+    }
+    send_response(response, nlohmann::json::parse(body));
+  }
+
+  /**
+   * @brief Prometheus metrics exposition. Unauthenticated by design
+   *        (metrics are non-sensitive and scrapers don't carry creds).
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   *
+   * @api_examples{/api/v1/metrics| GET| null}
+   */
+  void getLumenMetrics(const resp_https_t &response, const req_https_t &request) {
+    print_req(request);
+    lumen::metric_http_requests.fetch_add(1);
+    response->write("text/plain; version=0.0.4; charset=utf-8",
+                    lumen::render_metrics());
+  }
+
   void start() {
     platf::set_thread_name("confighttp");
     const auto shutdown_event = mail::man->event<bool>(mail::shutdown);
@@ -1787,6 +1863,12 @@ namespace confighttp {
     server.resource["^/api/restart$"]["POST"] = restart;
     server.resource["^/api/vigembus/status$"]["GET"] = getViGEmBusStatus;
     server.resource["^/api/vigembus/install$"]["POST"] = installViGEmBus;
+
+    // lumen v1 api (new in this fork)
+    server.resource["^/api/v1/system/version$"]["GET"] = getLumenVersion;
+    server.resource["^/api/v1/metrics$"]["GET"] = getLumenMetrics;
+    server.resource["^/api/v1/sessions/?$"]["GET"] = listLumenSessions;
+    server.resource["^/api/v1/sessions/([\\w-]+)$"]["GET"] = getLumenSession;
 
     // static/dynamic resources
     server.resource["^/images/sunshine.ico$"]["GET"] = getFaviconImage;

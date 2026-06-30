@@ -1,6 +1,6 @@
-# Porting the SolarFlare fork to other distros
+# Porting the lumen fork to other distros
 
-The SolarFlare fork ([vindeckyy/Solar-Flare](https://github.com/vindeckyy/Solar-Flare))
+The lumen fork ([vindeckyy/Solar-Flare](https://github.com/vindeckyy/Solar-Flare))
 is developed against CachyOS but is portable to any Arch-family or
 Debian/Ubuntu/Fedora/openSUSE-based distro. The CMake / build-system
 patches (Zen 1/2/3/4 auto-detection, `-march`/`-mtune`/`-flto`/`-O3`,
@@ -20,14 +20,14 @@ Three things stack here:
 1. **CachyOS ships GCC 14+ with `-march=x86-64-v3` baselines.** Older
    toolchains (Debian 12 ships GCC 12) can still build, but won't
    produce the AVX2/BMI2/FMA code paths that the CachyOS build of
-   Sunshine targets. You can build on Debian 12; you just won't get
+   Lumen targets. You can build on Debian 12; you just won't get
    the inliner unrolling the BGR->NV12 color-conversion loop.
 2. **CachyOS's BBRv3 + CachyOS-tuned kernel** gives better congestion
    behaviour on Wi-Fi 7 out of the box than mainline kernels. If you
    switch to a generic distro kernel, run `sudo sysctl -w
    net.ipv4.tcp_congestion_control=bbr` after install to compensate.
 3. **CachyOS packages** `pipewire`, `wayland`, `wlroots`, etc. with the
-   patches and protocol versions Sunshine expects. On other distros you
+   patches and protocol versions Lumen expects. On other distros you
    may need to also `git submodule update --init --recursive` to make
    sure the bundled `wlr-protocols` and `wayland-protocols` submodules
    take precedence.
@@ -107,7 +107,7 @@ The columns below mirror the case blocks in
 
 ### Debian 12 / Ubuntu 22.04
 
-- **GCC 12 vs GCC 14.** Sunshine's source requires GCC 13+ for
+- **GCC 12 vs GCC 14.** Lumen's source requires GCC 13+ for
   `<format>` and a few of the C++23 features in `src/stream.cpp` and
   `src/audio.cpp`. The `cachyos-build.sh` defaults to the system
   compiler. If `gcc --version` reports anything below 13, install
@@ -116,7 +116,7 @@ The columns below mirror the case blocks in
 - **PipeWire 0.3 dev headers** are split out as
   `libpipewire-0.3-dev` on Debian; on Ubuntu they're inside
   `libpipewire-dev`. Don't install both.
-- **Wayland protocols**. Sunshine pulls in `wlr-protocols` and
+- **Wayland protocols**. Lumen pulls in `wlr-protocols` and
   `wayland-protocols` as git submodules under `third-party/`, and the
   CMake build prefers those over the system copies. You can install
   the distro copy (`wayland-protocols` on Debian) as a no-op fallback
@@ -138,7 +138,7 @@ The columns below mirror the case blocks in
 - The Tumbleweed default kernel has BBR but the Congestion Control
   sysctl is `cubic`. After install, run `sudo sysctl -w
   net.ipv4.tcp_congestion_control=bbr` and add it to
-  `/etc/sysctl.d/99-sunshine.conf` to make it stick.
+  `/etc/sysctl.d/99-lumen.conf` to make it stick.
 
 ### Steam Deck (SteamOS 3.x, Arch-derived)
 
@@ -147,7 +147,7 @@ The columns below mirror the case blocks in
   at least 4 GB of free space.
 - SteamOS uses `pipewire-media-session` not `wireplumber`; either
   works but you'll see harmless debug logs about the missing
-  `wireplumber` service in `~/.config/sunshine/sunshine.log`.
+  `wireplumber` service in `~/.config/lumen/lumen.log`.
 
 ### Generic / non-pacman distros
 
@@ -163,25 +163,25 @@ package names above.
 After `cmake --install build`:
 
 ```bash
-sunshine --version
+lumen --version
 # Expected: a few info-level 'config: ...' lines, no errors, exit 0.
 
-sunshine --help
+lumen --help
 # Expected: usage block, exit 0.
 
 curl -sS https://localhost:47990 -k -o /dev/null -w '%{http_code}\n'
-# Expected: 200 (after `systemctl --user start sunshine` and the
+# Expected: 200 (after `systemctl --user start lumen` and the
 # initial PIN prompt).
 ```
 
-If any of the five SolarFlare-specific tunables doesn't appear in
-`sunshine --version` (with `min_log_level = 1` set), check that:
+If any of the five lumen-specific tunables doesn't appear in
+`lumen --version` (with `min_log_level = 1` set), check that:
 
-1. The binary at `/usr/local/bin/sunshine` was installed after the
+1. The binary at `/usr/local/bin/lumen` was installed after the
    `cmake --install` step (not the upstream-distro package).
-2. The fork source actually contains the keys: `grep -c solarflare_t
+2. The fork source actually contains the keys: `grep -c lumen_t
    src/config.h` should print `1`.
 
 If both check out but the keys still don't appear, you're probably
-running a stale install from `pacman -S sunshine` upstream. Uninstall
-that first: `sudo pacman -Rns sunshine` (or distro equivalent).
+running a stale install from `pacman -S lumen` upstream. Uninstall
+that first: `sudo pacman -Rns lumen` (or distro equivalent).

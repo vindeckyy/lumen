@@ -565,7 +565,7 @@
   import Navbar from './Navbar.vue'
   import Checkbox from './Checkbox.vue'
   import { apiFetch } from './fetch_utils'
-  import SunshineVersion from './sunshine_version'
+  import LumenVersion from './lumen_version'
   import { Modal } from 'bootstrap/dist/js/bootstrap'
   import {
     ArrowDown,
@@ -653,7 +653,7 @@
       },
       documentationBaseUrl() {
         const docsVersion = this.installedVersionNotStable ? 'master' : 'latest'
-        return `https://docs.lizardbyte.dev/projects/sunshine/${docsVersion}`
+        return `https://docs.lizardbyte.dev/projects/lumen/${docsVersion}`
       },
       displayedApps() {
         let list = this.apps.map((app, index) => ({ app, index }));
@@ -717,12 +717,12 @@
         .then(r => r.json())
         .then(r => {
           this.platform = r.platform;
-          this.version = new SunshineVersion(null, r.version);
+          this.version = new LumenVersion(null, r.version);
         });
 
       fetch("https://api.github.com/repos/vindeckyy/Solar-Flare/releases/latest")
         .then((r) => r.json())
-        .then((r) => this.githubVersion = new SunshineVersion(r, null))
+        .then((r) => this.githubVersion = new LumenVersion(r, null))
         .catch((e) => console.error(e));
     },
     methods: {

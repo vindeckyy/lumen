@@ -1,0 +1,262 @@
+openapi: 3.1.0
+info:
+  title: Lumen REST API
+  version: 2026.999.0
+  summary: Game-streaming host control + observability surface.
+  description: |
+    HTTP API exposed by Lumen's web server (port 47984, HTTPS).
+    Authenticated via Basic auth using the web-UI credentials.
+    All paths are first-class additions on top of the existing
+    Sunshine endpoint tree; lumenctl targets these paths, and the
+    spec is the contract for third-party integrations.
+  license:
+    name: GPL-3.0-only
+    identifier: GPL-3.0-only
+servers:
+  - url: https://localhost:47984
+    description: Default Lumen web port (self-signed cert; --insecure on lumenctl).
+tags:
+  - name: apps
+    description: Pair / launch / list configured apps.
+  - name: config
+    description: Read & patch the live config tree.
+  - name: clients
+    description: Paired Moonlight clients.
+  - name: metrics
+    description: Prometheus exposition (new in Lumen).
+  - name: sessions
+    description: Per-stream live metrics (new in Lumen).
+  - name: system
+    description: Liveness / version / restart.
+
+paths:
+  /api/apps:
+    get:
+      tags: [apps]
+      summary: List configured apps.
+      operationId: listApps
+      responses:
+        "200":
+          description: App list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/App" }
+    post:
+      tags: [apps]
+      summary: Create / overwrite an app.
+      operationId: saveApp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/App" }
+      responses:
+        "200": { description: Saved. }
+  /api/apps/{index}:
+    delete:
+      tags: [apps]
+      summary: Delete an app by index.
+      operationId: deleteApp
+      parameters:
+        - in: path
+          name: index
+          required: true
+          schema: { type: integer }
+      responses:
+        "200": { description: Deleted. }
+  /api/apps/close:
+    post:
+      tags: [apps]
+      summary: Terminate the running app.
+      operationId: closeApp
+      responses:
+        "200": { description: Closed. }
+
+  /api/config:
+    get:
+      tags: [config]
+      summary: Read the full config tree.
+      operationId: getConfig
+      responses:
+        "200":
+          description: Config payload.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Config" }
+    post:
+      tags: [config]
+      summary: Replace the config tree.
+      operationId: saveConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Config" }
+      responses:
+        "200": { description: Saved. }
+
+  /api/clients/list:
+    get:
+      tags: [clients]
+      summary: List paired Moonlight clients.
+      operationId: listClients
+      responses:
+        "200":
+          description: Client list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  clients:
+                    type: array
+                    items: { $ref: "#/components/schemas/Client" }
+                  host_uuid: { type: string, format: uuid }
+
+  /api/restart:
+    post:
+      tags: [system]
+      summary: Restart the streaming host (not the web server).
+      operationId: restart
+      responses:
+        "200":
+          description: Restart queued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Status" }
+
+  /api/v1/system/version:
+    get:
+      tags: [system]
+      summary: Lumen build version + capability flags.
+      operationId: getVersion
+      responses:
+        "200":
+          description: Version payload.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Version" }
+
+  /api/v1/metrics:
+    get:
+      tags: [metrics]
+      summary: Prometheus exposition.
+      operationId: metrics
+      description: |
+        NEW IN LUMEN. Returns Prometheus text format (no auth
+        required — metrics are non-sensitive). Counters and gauges
+        describing the streaming host's runtime state. Stable
+        contract: metric names are prefixed `lumen_`.
+      responses:
+        "200":
+          description: Prometheus text.
+          content:
+            text/plain:
+              schema: { type: string }
+              examples:
+                value: |
+                  # HELP lumen_up Whether the streaming host is alive (1) or not (0).
+                  # TYPE lumen_up gauge
+                  lumen_up 1
+                  # HELP lumen_active_streams Number of streams currently active.
+                  # TYPE lumen_active_streams gauge
+                  lumen_active_streams 0
+
+  /api/v1/sessions:
+    get:
+      tags: [sessions]
+      summary: List currently-active streaming sessions.
+      operationId: listSessions
+      description: |
+        NEW IN LUMEN. Returns a JSON array (empty if no streams are
+        active). Each entry exposes the per-stream metrics the live
+        dashboard renders: encoder FPS, bitrate, RTT, encode time,
+        frames sent/dropped.
+      responses:
+        "200":
+          description: Session list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SessionMetrics" }
+  /api/v1/sessions/{id}:
+    get:
+      tags: [sessions]
+      summary: Get a single session's metrics by id.
+      operationId: getSession
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Session payload.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionMetrics" }
+        "404": { description: Session not found. }
+
+components:
+  schemas:
+    Version:
+      type: object
+      required: [name, version]
+      properties:
+        name: { type: string, const: lumen }
+        version: { type: string, examples: ["2026.999.0"] }
+        protocol: { type: string, examples: ["moonlight-7.1.0"] }
+        build: { type: string, description: "git describe output." }
+        features:
+          type: object
+          additionalProperties: { type: boolean }
+          description: Capability flags (e.g. `metrics`, `nv_preset`, `pipewire_tuning`).
+
+    Status:
+      type: object
+      required: [status]
+      properties:
+        status: { type: boolean }
+        error: { type: string }
+
+    App:
+      type: object
+      required: [name, cmd]
+      properties:
+        name: { type: string }
+        cmd: { type: string }
+        prep_cmd: { type: string }
+        detached: { type: array, items: { type: string } }
+        image_path: { type: string }
+        working_dir: { type: string }
+
+    Client:
+      type: object
+      required: [uuid]
+      properties:
+        uuid: { type: string, format: uuid }
+        name: { type: string }
+        enabled: { type: boolean }
+
+    Config:
+      type: object
+      additionalProperties: true
+
+    SessionMetrics:
+      type: object
+      required: [id, app_name, client_name, started_at_ms]
+      properties:
+        id: { type: string, description: "Session UUID-ish identifier." }
+        app_name: { type: string }
+        client_name: { type: string }
+        started_at_ms: { type: integer, format: int64, description: "Unix epoch ms when the session started." }
+        encoder_fps: { type: number, description: "Actual encoder output rate." }
+        target_fps: { type: number, description: "Configured target rate." }
+        bitrate_kbps: { type: integer, description: "Current encoder bitrate." }
+        rtt_ms: { type: integer, description: "Round-trip time to the Moonlight client." }
+        encode_ms: { type: number, description: "Per-frame encoder CPU time." }
+        frames_sent: { type: integer, format: int64 }
+        frames_dropped: { type: integer, format: int64 }

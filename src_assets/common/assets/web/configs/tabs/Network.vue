@@ -58,7 +58,7 @@ const effectivePort = computed(() => +config.value?.port ?? defaultMoonlightPort
       <div class="alert alert-danger" v-if="(+effectivePort + 21) > 65535">
         <TriangleAlert :size="20" /> {{ $t('config.port_alert_2') }}
       </div>
-      <!-- Create a port table for the various ports needed by Sunshine -->
+      <!-- Create a port table for the various ports needed by Lumen -->
       <table class="table">
         <thead>
         <tr>

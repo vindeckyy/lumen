@@ -70,19 +70,19 @@
         </div>
       </div>
     </div>
-    <!-- Restart Sunshine (binary name; the project is SolarFlare) -->
+    <!-- Restart Lumen (binary name; the project is SolarFlare) -->
     <div class="card my-4">
       <div class="card-body">
-        <h2 id="restart">{{ $t('troubleshooting.restart_sunshine') }}</h2>
-        <p>{{ $t('troubleshooting.restart_sunshine_desc') }}</p>
+        <h2 id="restart">{{ $t('troubleshooting.restart_lumen') }}</h2>
+        <p>{{ $t('troubleshooting.restart_lumen_desc') }}</p>
         <div class="alert alert-success" v-if="restartPressed === true">
           <check-circle :size="18" class="icon"></check-circle>
-          {{ $t('troubleshooting.restart_sunshine_success') }}
+          {{ $t('troubleshooting.restart_lumen_success') }}
         </div>
         <div>
           <button class="btn btn-warning" :disabled="restartPressed" @click="restart">
             <refresh-cw :size="18" class="icon"></refresh-cw>
-            {{ $t('troubleshooting.restart_sunshine') }}
+            {{ $t('troubleshooting.restart_lumen') }}
           </button>
         </div>
       </div>
@@ -316,7 +316,7 @@
             if (!raw) continue;
 
             // Determine level based on the *first* level token in the entry.
-            // Sunshine logs are typically: "[ts]: Level: message".
+            // Lumen logs are typically: "[ts]: Level: message".
             // Some messages may contain additional embedded timestamps, but we treat
             // those as part of the entry content.
             let level = 'Info';

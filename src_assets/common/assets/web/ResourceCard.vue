@@ -29,12 +29,12 @@
             <h2>{{ $t('resource_card.legal') }}</h2>
             <p>{{ $t('resource_card.legal_desc') }}</p>
             <div class="d-flex flex-wrap gap-2 mt-4">
-                <a class="btn btn-danger" href="https://github.com/LizardByte/Sunshine/blob/master/LICENSE"
+                <a class="btn btn-danger" href="https://github.com/LizardByte/Lumen/blob/master/LICENSE"
                     target="_blank">
                   <FileText :size="18" class="icon"></FileText>
                   {{ $t('resource_card.license') }}
                 </a>
-                <a class="btn btn-danger" href="https://github.com/LizardByte/Sunshine/blob/master/NOTICE"
+                <a class="btn btn-danger" href="https://github.com/LizardByte/Lumen/blob/master/NOTICE"
                     target="_blank">
                   <AlertCircle :size="18" class="icon"></AlertCircle>
                   {{ $t('resource_card.third_party_notice') }}
@@ -70,7 +70,7 @@ export default {
   computed: {
     documentationUrl() {
       const docsVersion = this.installedVersionNotStable ? 'master' : 'latest'
-      return `https://docs.lizardbyte.dev/projects/sunshine/${docsVersion}/`
+      return `https://docs.lizardbyte.dev/projects/lumen/${docsVersion}/`
     }
   }
 }

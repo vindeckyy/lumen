@@ -1,11 +1,13 @@
 {
-  "name": "sunshine",
-  "version": "0.0.0",
+  "name": "lumen",
+  "version": "2026.999.0",
+  "description": "Game-streaming host (Sunshine fork) — Lumen edition with REST API + lumenctl CLI.",
   "scripts": {
     "build": "vite build --debug",
     "build-clean": "vite build --debug --emptyOutDir",
     "dev": "vite build --watch",
-    "serve": "serve ./tests/fixtures/http --no-port-switching"
+    "serve": "serve ./tests/fixtures/http --no-port-switching",
+    "lint:openapi": "python3 tools/lint_openapi.py lumen_api/openapi.yaml"
   },
   "type": "module",
   "dependencies": {

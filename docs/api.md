@@ -1,114 +1,130 @@
-# API
+# Lumen REST API
 
-Sunshine has a RESTful API which can be used to interact with the service.
+Lumen exposes an HTTP API on the same port as the web UI
+(`https://localhost:47984` by default, self-signed cert).
+Every endpoint under `/api/*` requires HTTP Basic auth using the
+same credentials as the web UI. The one exception is
+`/api/v1/metrics`, which is intentionally unauthenticated so
+scrapers can fetch it without managing creds.
 
-Unless otherwise specified, authentication is required for all API calls. You can authenticate using
-basic authentication with the admin username and password.
+The full machine-readable contract is [`lumen_api/openapi.yaml`](../lumen_api/openapi.yaml).
+The CLI in [`lumenctl/`](../lumenctl/) is a stdlib-Python reference
+client and the fastest way to poke the API.
 
-## CSRF Protection
+## Endpoints (summary)
 
-State-changing API endpoints (POST, DELETE) are protected against Cross-Site Request Forgery (CSRF) attacks.
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET`   | `/api/apps`                  | List configured apps               |
+| `POST`  | `/api/apps`                  | Create or overwrite an app         |
+| `DELETE`| `/api/apps/{index}`          | Delete an app by index             |
+| `POST`  | `/api/apps/close`            | Terminate the running app          |
+| `GET`   | `/api/config`                | Read full config tree              |
+| `POST`  | `/api/config`                | Replace the config tree            |
+| `GET`   | `/api/clients/list`          | List paired Moonlight clients      |
+| `POST`  | `/api/clients/unpair`        | Unpair a single client             |
+| `POST`  | `/api/clients/unpair-all`    | Unpair every client                |
+| `POST`  | `/api/clients/update`        | Enable / disable a paired client   |
+| `POST`  | `/api/password`              | Change the web-UI password         |
+| `POST`  | `/api/pin`                   | Pair with a PIN                    |
+| `POST`  | `/api/restart`               | Restart the streaming host         |
+| `GET`   | `/api/logs`                  | Tail the in-memory log buffer      |
+| `GET`   | `/api/v1/system/version`     | **New in Lumen** — build info      |
+| `GET`   | `/api/v1/metrics`            | **New in Lumen** — Prometheus      |
+| `GET`   | `/api/v1/sessions`           | **New in Lumen** — active streams  |
+| `GET`   | `/api/v1/sessions/{id}`      | **New in Lumen** — one stream      |
 
-**For Web Browsers:**
-- Requests from same-origin (configured via `csrf_allowed_origins`) are automatically allowed
-- Cross-origin requests require a CSRF token
+## `lumenctl` examples
 
-**For Non-Browser Applications:**
-- Non-browser clients (e.g. `curl`, scripts, custom apps) are **exempt** from CSRF protection
-- CSRF attacks require a browser to silently attach credentials to a cross-origin request — this threat
-  does not apply to non-browser clients that explicitly provide credentials with every request
-- Requests with no `Origin` or `Referer` header (as is typical for non-browser clients) are automatically
-  allowed without a CSRF token
-
-**Example (browser-equivalent cross-origin request):**
 ```bash
-# Get CSRF token
-curl -u user:pass https://localhost:47990/api/csrf-token
+# Show Lumen version + build
+lumenctl status
 
-# Use token in request
-curl -u user:pass -H "X-CSRF-Token: your_token_here" \
-  -X POST https://localhost:47990/api/restart
+# List configured apps
+lumenctl apps
+
+# Patch a single config key (RFC 7396 merge-patch)
+echo '{"lumen":{"nv_preset":0}}' > /tmp/patch.json
+lumenctl config-set /tmp/patch.json
+
+# Scrape Prometheus metrics, filter to active streams
+lumenctl metrics --filter lumen_active_streams
 ```
 
-@htmlonly
-<script src="api.js"></script>
-@endhtmlonly
+## Auth
 
-## GET /api/csrf-token
-@copydoc confighttp::getCSRFToken()
+`lumenctl` reads the password via `getpass` on every invocation
+(no env var, no file). If you want daemon-mode operation, wrap
+it in a keyring helper; we deliberately don't ship one to keep
+the dependency surface to zero.
 
-## GET /api/apps
-@copydoc confighttp::getApps()
+## Metrics
 
-## POST /api/apps
-@copydoc confighttp::saveApp()
+`GET /api/v1/metrics` returns Prometheus text format
+(`text/plain; version=0.0.4`). Counter and gauge names are
+prefixed `lumen_`. Example:
 
-## POST /api/apps/close
-@copydoc confighttp::closeApp()
+```text
+# HELP lumen_up Whether the streaming host is alive (1) or not (0).
+# TYPE lumen_up gauge
+lumen_up 1
+# HELP lumen_active_streams Number of streams currently active.
+# TYPE lumen_active_streams gauge
+lumen_active_streams 0
+# HELP lumen_bytes_sent Total bytes sent to clients since process start.
+# TYPE lumen_bytes_sent counter
+lumen_bytes_sent 0
+```
 
-## DELETE /api/apps/{index}
-@copydoc confighttp::deleteApp()
+Configure your Prometheus scrape like so:
 
-## GET /api/browse
-@copydoc confighttp::browseDirectory()
+```yaml
+scrape_configs:
+  - job_name: lumen
+    scheme: https
+    tls_config:
+      insecure_skip_verify: true   # self-signed cert
+    static_configs:
+      - targets: ['localhost:47984']
+    metrics_path: /api/v1/metrics
+```
 
-## GET /api/clients/list
-@copydoc confighttp::getClients()
+## Versioning
 
-## POST /api/clients/unpair
-@copydoc confighttp::unpair()
+Path versioning (`/api/v1/...`) is the Lumen convention. New
+fields may be added to existing schemas without bumping the
+major; breaking changes move to `/api/v2/...`. The legacy
+`/api/...` paths follow the Sunshine semantic and are stable.
 
-## POST /api/clients/unpair-all
-@copydoc confighttp::unpairAll()
+## Live sessions
 
-## POST /api/clients/update
-@copydoc confighttp::updateClient()
+`GET /api/v1/sessions` returns the per-stream metrics the
+`/metrics.html` dashboard renders. A session entry looks like:
 
-## GET /api/config
-@copydoc confighttp::getConfig()
+```json
+{
+  "id": "5e1c…",
+  "app_name": "Elden Ring",
+  "client_name": "Living Room PC",
+  "started_at_ms": 1719763912000,
+  "encoder_fps": 143.7,
+  "target_fps": 144,
+  "bitrate_kbps": 48230,
+  "rtt_ms": 18,
+  "encode_ms": 4.7,
+  "frames_sent": 183921,
+  "frames_dropped": 42
+}
+```
 
-## GET /api/configLocale
-@copydoc confighttp::getLocale()
+The web dashboard polls this endpoint every second. For
+command-line users:
 
-## POST /api/config
-@copydoc confighttp::saveConfig()
+```bash
+lumenctl sessions
+#   5e1c…          Elden Ring               Living Room PC    fps=143.7  bitrate=48230kbps  rtt=  18ms
+```
 
-## GET /api/covers/{index}
-@copydoc confighttp::getCover()
-
-## POST /api/covers/upload
-@copydoc confighttp::uploadCover()
-
-## GET /api/logs
-@copydoc confighttp::getLogs()
-
-## POST /api/password
-@copydoc confighttp::savePassword()
-
-## POST /api/pin
-@copydoc confighttp::savePin()
-
-## POST /api/reset-display-device-persistence
-@copydoc confighttp::resetDisplayDevicePersistence()
-
-## POST /api/restart
-@copydoc confighttp::restart()
-
-## GET /api/vigembus/status
-@copydoc confighttp::getViGEmBusStatus()
-
-## POST /api/vigembus/install
-@copydoc confighttp::installViGEmBus()
-
-<div class="section_buttons">
-
-| Previous                                    |                                  Next |
-|:--------------------------------------------|--------------------------------------:|
-| [Performance Tuning](performance_tuning.md) | [Troubleshooting](troubleshooting.md) |
-
-</div>
-
-<details style="display: none;">
-  <summary></summary>
-  [TOC]
-</details>
+The dashboard at `/metrics.html` is a self-contained vanilla-JS
+page (no chart library, no framework) — open it in any browser
+to see FPS, bitrate, and RTT over the last 60 seconds.

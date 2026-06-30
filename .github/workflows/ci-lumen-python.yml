@@ -1,0 +1,71 @@
+# ci-lumen-python.yml — runs the stdlib-only Python tooling tests.
+#
+# C++ CI lives in the existing
+# ci-solarflare.yml / ci-linux.yml matrix (needs GPU SDKs, runners
+# with the toolchain, etc.). This workflow exists to make sure
+# lumenctl, the OpenAPI linter, and the migrate tool keep working
+# whenever someone touches a .py file.
+#
+# Triggered on:
+#   - push to main affecting tools/, lumen_api/, lumenctl/, or tests/lumen_api/
+#   - pull_request same paths
+#
+# Runtime: ~10s, ubuntu-latest, no extra apt packages.
+
+name: Lumen Python Tooling
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/**'
+      - 'lumen_api/**'
+      - 'lumenctl/**'
+      - 'tests/lumen_api/**'
+      - 'docs/api.md'
+      - '.github/workflows/ci-lumen-python.yml'
+  pull_request:
+    paths:
+      - 'tools/**'
+      - 'lumen_api/**'
+      - 'lumenctl/**'
+      - 'tests/lumen_api/**'
+      - 'docs/api.md'
+      - '.github/workflows/ci-lumen-python.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run lumen_api tests
+        run: |
+          python3 tests/lumen_api/test_lumen.py -v
+          python3 tests/lumen_api/test_library_and_init.py -v
+
+      - name: Lint the OpenAPI spec
+        run: python3 tools/lint_openapi.py lumen_api/openapi.yaml
+
+      - name: Byte-compile lumenctl
+        run: python3 -m py_compile lumenctl/lumenctl
+
+      - name: Migrate dry-run (stdin -> stdout)
+        run: |
+          echo '[sunshine]
+          port = 47984
+          flag = true
+          nv_preset = 0' | python3 tools/migrate_sunshine_config.py -
+
+      - name: Library scanner dry-run
+        run: python3 tools/lumen_library.py --scan --pretty | head -20

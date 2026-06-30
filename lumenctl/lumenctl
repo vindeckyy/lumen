@@ -1,0 +1,265 @@
+#!/usr/bin/env python3
+"""
+lumenctl — stdlib-only CLI for the Lumen REST API + management helpers.
+
+argparse + urllib.request. No requests, no click, no rich.
+The whole client fits in one file with no install step (just chmod +x).
+"""
+from __future__ import annotations
+
+import argparse
+import base64
+import getpass
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+from typing import Any
+
+DEFAULT_URL = os.environ.get("LUMEN_URL", "http://localhost:47984")
+DEFAULT_USER = os.environ.get("LUMEN_USER", "admin")
+# Password intentionally not read from env: re-type each call. The web UI
+# stores it in the OS keyring on first run; lumenctl re-prompts for it.
+# If daemon-mode is ever needed, add `keyring` as a dep.
+LIBRARY_SCRIPT = pathlib.Path(__file__).resolve().parent.parent / "tools" / "lumen_library.py"
+
+
+# ---------------------------------------------------------------------------
+# REST client helpers.
+# ---------------------------------------------------------------------------
+
+def _request(method: str, path: str, password: str, body: Any = None, base: str = DEFAULT_URL) -> Any:
+    url = base.rstrip("/") + path
+    data = None
+    headers = {"Accept": "application/json"}
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
+    token = base64.b64encode(f"{DEFAULT_USER}:{password}".encode()).decode()
+    req.add_header("Authorization", f"Basic {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = resp.read()
+            if not raw:
+                return None
+            ct = resp.headers.get("Content-Type", "")
+            return json.loads(raw) if ct.startswith("application/json") else raw.decode()
+    except urllib.error.HTTPError as e:
+        sys.stderr.write(f"HTTP {e.code}: {e.reason}\n")
+        sys.exit(2)
+
+
+def _prompt_password() -> str:
+    return getpass.getpass("lumen admin password: ")
+
+
+# ---------------------------------------------------------------------------
+# REST commands.
+# ---------------------------------------------------------------------------
+
+def cmd_status(_args, password: str) -> int:
+    v = _request("GET", "/api/v1/system/version", password)
+    print(f"{v['name']} v{v['version']} (protocol {v['protocol']}, build {v.get('build','?')})")
+    return 0
+
+
+def cmd_apps(_args, password: str) -> int:
+    apps = _request("GET", "/api/apps", password)
+    for a in apps:
+        print(f"  {a.get('id','?'):<24} {a['name']:<30} {a['cmd']}")
+    return 0
+
+
+def cmd_launch(args, password: str) -> int:
+    _request("POST", f"/api/apps/{args.app_id}/launch", password)
+    print(f"launched {args.app_id}")
+    return 0
+
+
+def cmd_config_get(_args, password: str) -> int:
+    cfg = _request("GET", "/api/config", password)
+    print(json.dumps(cfg, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_config_set(args, password: str) -> int:
+    with open(args.file) as f:
+        patch = json.load(f)
+    _request("POST", "/api/config", password, patch)
+    print("config patched")
+    return 0
+
+
+def cmd_clients(_args, password: str) -> int:
+    clients = _request("GET", "/api/clients/list", password)
+    for c in clients.get("clients", []):
+        print(f"  {c['uuid']}  {c['name']:<24}  last seen {c.get('last_seen','?')}")
+    return 0
+
+
+def cmd_metrics(args, password: str) -> int:
+    raw = _request("GET", "/api/v1/metrics", password)
+    if args.filter:
+        for line in raw.splitlines():
+            if line.startswith(args.filter):
+                print(line)
+    else:
+        sys.stdout.write(raw)
+    return 0
+
+
+def cmd_sessions(_args, password: str) -> int:
+    sessions = _request("GET", "/api/v1/sessions", password)
+    if not sessions:
+        print("  (no active sessions)")
+        return 0
+    for s in sessions:
+        print(f"  {s['id']:<16} {s.get('app_name','?'):<24} "
+              f"{s.get('client_name','?'):<16} "
+              f"fps={s.get('encoder_fps',0):5.1f}  "
+              f"bitrate={s.get('bitrate_kbps',0):6.0f}kbps  "
+              f"rtt={s.get('rtt_ms',0):4.0f}ms")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Local management commands (no server round-trip).
+# ---------------------------------------------------------------------------
+
+def cmd_library(args, _password: str) -> int:
+    """Discover installed games; optionally diff against an existing config."""
+    if not LIBRARY_SCRIPT.exists():
+        sys.stderr.write(f"missing {LIBRARY_SCRIPT}\n")
+        return 2
+    cmd = ["python3", str(LIBRARY_SCRIPT), "--scan"]
+    if args.pretty:
+        cmd.append("--pretty")
+    if args.diff:
+        cmd += ["--diff", args.diff]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    games = json.loads(result.stdout)
+    if args.json:
+        sys.stdout.write(json.dumps(games, indent=2))
+        sys.stdout.write("\n")
+        return 0
+    if not games:
+        print(f"  (no games found{'; already all imported' if args.diff else ''})")
+        return 0
+    print(f"  {len(games)} game(s) found:")
+    for g in games:
+        print(f"    [{g['launcher']:<7}] {g['name']:<30} {g['exec']}")
+    return 0
+
+
+def cmd_init(args, _password: str) -> int:
+    """Headless first-run: create config dir + write minimal lumen.conf with creds."""
+    cfg_dir = args.config_dir.expanduser()
+    cfg_file = cfg_dir / "lumen.conf"
+    creds_file = cfg_dir / "credentials"  # The C++ side reads this.
+
+    if cfg_file.exists() and not args.force:
+        sys.stderr.write(f"refusing to overwrite {cfg_file} (use --force)\n")
+        return 2
+
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    creds_file.parent.mkdir(parents=True, exist_ok=True)
+
+    cfg_file.write_text(
+        "; Generated by `lumenctl init`\n"
+        "[general]\n"
+        "name = lumen\n"
+        f"version = 2026.999.0\n\n"
+        "[lumen]\n"
+        "busy_poll_us = 50\n"
+        "enet_4mib_buffer = 1\n"
+        "pipewire_latency_ms = 8\n"
+        "cpu_pinning = 1\n"
+        "rate_cap_pct = 80\n"
+        "nv_preset = -1\n"
+    )
+
+    # Credentials: the C++ side expects `username:password` plaintext in a
+    # single-line file (matches Sunshine's behavior). Chmod 600.
+    creds_file.write_text(f"{args.user}:{args.password}\n")
+    os.chmod(creds_file, 0o600)
+
+    print(f"wrote {cfg_file}")
+    print(f"wrote {creds_file} (mode 0600)")
+    print("next: start the lumen binary; the web UI will be available on port 47984")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand wiring.
+# ---------------------------------------------------------------------------
+
+def main() -> int:
+    p = argparse.ArgumentParser(prog="lumenctl", description="Lumen REST CLI + manager.")
+    p.add_argument("--url", default=DEFAULT_URL, help="Base URL (default: $LUMEN_URL or localhost:47984).")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("status", help="Show Lumen version.")
+
+    sub.add_parser("apps", help="List configured apps.")
+
+    sp = sub.add_parser("launch", help="Launch an app by id.")
+    sp.add_argument("app_id")
+
+    sub.add_parser("config-get", help="Dump the full config tree as JSON.")
+
+    sp = sub.add_parser("config-set", help="Patch the config from a JSON file.")
+    sp.add_argument("file", help="RFC 7396 merge-patch JSON file.")
+
+    sub.add_parser("clients", help="List paired Moonlight clients.")
+
+    sp = sub.add_parser("metrics", help="Fetch Prometheus metrics.")
+    sp.add_argument("--filter", default=None, help="Only show lines starting with this prefix.")
+
+    sub.add_parser("sessions", help="List active streaming sessions + live metrics.")
+
+    sp = sub.add_parser("library", help="Discover installed games (Steam / Heroic / Flatpak / desktop).")
+    sp.add_argument("--diff", default=None,
+                    help="Only show games not already present in this lumen.conf.")
+    sp.add_argument("--pretty", action="store_true", help="Pretty-print the JSON output.")
+    sp.add_argument("--json", action="store_true", help="Emit raw JSON instead of a table.")
+
+    sp = sub.add_parser("init", help="Headless first-run setup (config dir + minimal lumen.conf + creds).")
+    sp.add_argument("--user", required=True, help="Web-UI admin username.")
+    sp.add_argument("--password", default=None,
+                    help="Web-UI admin password (prompted if omitted; required for non-interactive use).")
+    sp.add_argument("--config-dir", default="~/.config/lumen", type=pathlib.Path,
+                    help="Where to write lumen.conf + credentials (default: ~/.config/lumen).")
+    sp.add_argument("--force", action="store_true", help="Overwrite an existing config.")
+
+    args = p.parse_args()
+
+    # `init` doesn't need a server password — it bootstraps the config
+    # *before* the server exists. Same for `library`, which is read-only.
+    password = ""
+    if args.cmd not in {"library", "init"}:
+        if args.cmd == "init" and args.password:
+            password = args.password
+        else:
+            password = _prompt_password()
+
+    handlers = {
+        "status": cmd_status,
+        "apps": cmd_apps,
+        "launch": cmd_launch,
+        "config-get": cmd_config_get,
+        "config-set": cmd_config_set,
+        "clients": cmd_clients,
+        "metrics": cmd_metrics,
+        "sessions": cmd_sessions,
+        "library": cmd_library,
+        "init": cmd_init,
+    }
+    return handlers[args.cmd](args, password)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

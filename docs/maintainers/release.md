@@ -1,13 +1,13 @@
-# Create a stable Sunshine release
+# Create a stable Lumen release
 
-Pre-releases in Sunshine are created automatically on every push event to the `master` branch. These are required
+Pre-releases in Lumen are created automatically on every push event to the `master` branch. These are required
 to be created before making a stable release. Below are the instructions for converting a pre-release to stable.
 
 1. Wait for the pre-release to be created.
 2. Once the pre-release is created, the copr build will begin in the
    [beta copr repo](https://copr.fedorainfracloud.org/coprs/lizardbyte/beta/).
    Wait for this build to succeed before continuing. You can view the status
-   [here](https://github.com/LizardByte/Sunshine/actions/workflows/ci-copr.yml?query=event%3Arelease)
+   [here](https://github.com/LizardByte/Lumen/actions/workflows/ci-copr.yml?query=event%3Arelease)
 3. Once the workflow mentioned in step 2 completes, it will update the GitHub release with the RPM files from the copr
    build.
 4. At this point, the GitHub release can be edited.
@@ -30,9 +30,9 @@ to be created before making a stable release. Below are the instructions for con
        - r/LizardByte subreddit
        - Facebook
 
-   - Update changelog in [changelog](https://github.com/LizardByte/Sunshine/tree/changelog) branch
-   - Update docs on [Read The Docs](https://app.readthedocs.org/projects/sunshinestream/)
-   - Update official [Flathub repo](https://github.com/flathub/dev.lizardbyte.app.Sunshine/pulls) via a PR
+   - Update changelog in [changelog](https://github.com/LizardByte/Lumen/tree/changelog) branch
+   - Update docs on [Read The Docs](https://app.readthedocs.org/projects/lumenstream/)
+   - Update official [Flathub repo](https://github.com/flathub/dev.lizardbyte.app.Lumen/pulls) via a PR
      (we have merge control)
    - Update our homebrew-homebrew repo via a PR (https://github.com/LizardByte/homebrew-homebrew/pulls)
    - Update our pacman-repo via a PR (https://github.com/LizardByte/pacman-repo/pulls)
