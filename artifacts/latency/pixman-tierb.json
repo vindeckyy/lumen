@@ -1,0 +1,22 @@
+{
+  "client_cpu_limit_percent": 85.0,
+  "client_cpu_percent_of_pinned_cores": 24.5,
+  "client_cpu_seconds": 146.76,
+  "cpu_count": 2,
+  "cpus": "0,1",
+  "decode_errors": 2,
+  "decode_p50_ms": 5.093,
+  "decode_p99_limit_ms": 12.0,
+  "decode_p99_ms": 6.718,
+  "dropped_frames": 33,
+  "duration_s": 300,
+  "frames_decoded": 16419,
+  "frames_in_flight_at_the_end": 5,
+  "frames_presented": 16388,
+  "notes": "the client presents the frames on the CPU (decision D49), so at 1080p60 the colour conversion and the presentation take longer than the frame interval and the client drops the frames that are late. The zero-copy path (O-7) is the prerequisite for the Tier B target of the plan.",
+  "pass": false,
+  "presented_fps": 54.63,
+  "provisional": true,
+  "provisional_reason": "a two vCPU proxy on the build machine, not the Tier B device; software pipeline latency, not glass-to-glass",
+  "tier": "b-proxy"
+}

@@ -66,6 +66,11 @@ impl VaapiDecoder {
         self
     }
 
+    /// Chooses DMA-BUF or CPU output for the pictures decoded from now on.
+    pub fn set_dmabuf_output(&mut self, enabled: bool) {
+        self.prefer_dmabuf = enabled;
+    }
+
     /// Barrier: wait until no VA work is in flight. `decode` syncs each picture before it
     /// returns, so nothing is pending between calls.
     ///
@@ -241,6 +246,81 @@ mod tests {
         eprintln!(
             "decoded surface DMA-BUF: fourcc {:#x} modifier {:#x} planes {:?}",
             image.fourcc, image.modifier, described
+        );
+    }
+
+    /// The video processor converts a decoded DMA-BUF picture to BGRX on the GPU. Every colour
+    /// channel must match the CPU conversion of the CPU NV12 decode of the same picture within 2.
+    #[test]
+    fn decoded_dmabuf_converts_to_bgrx_like_the_cpu_path() {
+        use lumen_ffi_va::{OwnedVaSurface, VideoProcessor};
+        use lumen_protocol::color;
+
+        const TEST: &str = "decoded_dmabuf_converts_to_bgrx_like_the_cpu_path";
+        let Some(decoder) = decoder_or_skip(TEST) else {
+            return;
+        };
+        let mut cpu = decoder.cpu_output();
+        let reference = cpu
+            .decode(&access_unit(IDR_64X64))
+            .expect("fixture decodes")
+            .expect("one complete picture");
+        let FrameBuffer::Cpu { data: nv12 } = &reference.buffer else {
+            panic!("cpu_output must yield a CPU frame");
+        };
+        let mut expected = vec![0u8; PixelFormat::Bgrx.frame_len(64, 64)];
+        color::nv12_to_bgrx(nv12, 64, 64, &mut expected).expect("reference conversion");
+
+        let Some(decoder) = decoder_or_skip(TEST) else {
+            return;
+        };
+        let display = decoder.display.clone();
+        let mut gpu = decoder.dmabuf_output();
+        let frame = gpu
+            .decode(&access_unit(IDR_64X64))
+            .expect("fixture decodes")
+            .expect("one complete picture");
+        let FrameBuffer::Dmabuf(image) = &frame.buffer else {
+            eprintln!("SKIP {TEST}: the driver export cannot be described as a DMA-BUF frame");
+            return;
+        };
+        let source = OwnedVaSurface::import_frame(&display, image, PixelFormat::Nv12, 64, 64)
+            .expect("import the decoded DMA-BUF picture");
+        let mut vpp = match VideoProcessor::new(&display, 64, 64) {
+            Ok(vpp) => vpp,
+            Err(reason) => {
+                eprintln!("SKIP {TEST}: no GPU video processing: {reason}");
+                return;
+            }
+        };
+        let converted = vpp
+            .convert(&source, PixelFormat::Bgrx, 64, 64)
+            .expect("convert on the GPU");
+        let mut readback = converted
+            .get_image_as(PixelFormat::Bgrx)
+            .expect("read the converted BGRX picture back");
+        let info = *readback.info();
+        let mapped = readback.map().expect("map the converted image");
+        let bytes = mapped.bytes();
+        let pitch = info.pitches[0] as usize;
+        let offset = info.offsets[0] as usize;
+        let mut worst = 0u8;
+        for y in 0..64 {
+            for x in 0..64 {
+                for channel in 0..3 {
+                    let got = bytes[offset + y * pitch + x * 4 + channel];
+                    let want = expected[(y * 64 + x) * 4 + channel];
+                    worst = worst.max(got.abs_diff(want));
+                }
+            }
+        }
+        eprintln!("VPP BGRX vs CPU BGRX: worst channel difference {worst}");
+        assert!(
+            worst <= 2,
+            "GPU conversion differs from the CPU path by {worst}"
+        );
+        eprintln!(
+            "SKIP {TEST}: the 1280x720 assertion needs a 1280x720 decode fixture, none is in the decoder tests"
         );
     }
 

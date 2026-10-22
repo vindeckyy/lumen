@@ -835,3 +835,40 @@ These are explicit non-results. Do not fill any of them in without a new measure
 3. Measure the baselines with the same harness: Moonlight with Sunshine, RustDesk, and GNOME Remote Desktop in RDP mode.
 4. Run the soak for its full length, and the rest of the chaos plan.
 5. Re-run the loss sweep with the parity level fixed and with it adaptive, side by side, so the cost of the adaptation is a measurement rather than an inference from two different runs.
+
+## The latency plan: before and after (provisional)
+
+Software pipeline latency on this machine, not glass-to-glass. Before: `artifacts/latency/baseline-*` (P0, the code before the latency change). After: `artifacts/latency/after-*` (the GPU path, `WLR_RENDERER=gles2`). The reports were read with `lumen-bench report --input <file> --out <tmp>`.
+
+| Run | Before | After |
+|---|---|---|
+| Loopback 30 s, presented / sent | 872 / 872 | 870 / 870 |
+| Loopback, zero-copy presents | 0 | 870 |
+| Loopback, frames converted on the GPU / host frames captured | 0 | 871 / 871 |
+| Loopback end-to-end p50 / p99 (ms) | 19.02 / 22.82 | 8.59 / 11.95 |
+| Loopback client present p50 (ms) | 4.37 | 0.047 |
+| Netns end-to-end p50 / p99 (ms) | 19.18 / 23.24 | 8.58 / 11.99 |
+| Netns client present p50 (ms) | 4.46 | 0.047 |
+| Loss sweep 0.5 / 2 / 5 %, decode errors | 3 / 4 / 7 | 1 / 1 / 0 |
+| Loss sweep 0.5 / 2 / 5 %, frames presented of sent | 299/307, 296/308, 278/301 | 302/305, 303/308, 307/309 |
+| Two-vCPU proxy 300 s, dropped frames | 5 | 0 |
+| Two-vCPU proxy 300 s, decode p50 / p99 (ms) | 5.18 / 6.32 | 2.28 / 2.95 |
+| M4 run with audio, clipboard and resize, end-to-end p50 (ms) | n/a | 8.31, decode errors 0, resize events 2 |
+
+The after loopback run has one frame more converted than presented, and the M4 run has one packet lost. Neither changed a decode error.
+
+**The two-vCPU proxy on the CPU path (`WLR_RENDERER=pixman`), dropped frames over 300 s:**
+
+| Run | Block after a failed picture | Dropped frames |
+|---|---|---|
+| Before the latency change (`baseline-tierb.json`) | 300 s | 5 |
+| After, first run (`pixman-tierb.json`) | 60 s | 33 |
+| After, second run (`rerun-pixman-tierb.json`) | 60 s | 29 |
+| After, experiment (`experiment-block300-pixman-tierb.json`) | 300 s | 14 |
+
+One run each except the two of the current code. The block length is the largest cause the runs show, not the only one: 14 is still above 5. Each run was made alone on the machine. The block length is open (known-limits O-39).
+
+**Input.** `artifacts/latency/input.json`: 60000 events, p50 46 µs, p99 115 µs, 0 failures, 0 replays. This is the example injector with XTEST, not the client capture path (known-limits O-38).
+
+**The GPU path in numbers.** The colour conversion on the CPU costs 6.81 ms at 1080p; the GPU path has no CPU conversion on the frames it handles. The VPP output matches the CPU conversion to a worst channel difference of 2 at 64x64. The 1280x720 comparison skips for lack of a fixture (known-limits O-40).
+

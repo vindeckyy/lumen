@@ -481,15 +481,23 @@ impl Api for HostApi {
         }
     }
 
-    fn log(&self) -> Vec<Value> {
-        log_lines()
+    fn log(&self, after: u64) -> Vec<Value> {
+        log_values(crate::log::recent_after(after, LOG_PAGE))
     }
 }
 
-/// The recent log lines, as the control plane sends them.
+/// The most log lines one response carries. The dashboard keeps asking for the next ones.
+const LOG_PAGE: usize = 500;
+
+/// The recent log lines, as the state carries them.
 fn log_lines() -> Vec<Value> {
-    crate::log::recent(200)
+    log_values(crate::log::recent(200))
+}
+
+/// The log lines as JSON for the control plane, with their sequence numbers.
+fn log_values(lines: Vec<crate::log::LogLine>) -> Vec<Value> {
+    lines
         .into_iter()
-        .map(|line| json!({ "level": line.level, "time": line.time, "message": line.message }))
+        .map(|line| json!({ "seq": line.seq, "level": line.level, "time": line.time, "message": line.message }))
         .collect()
 }

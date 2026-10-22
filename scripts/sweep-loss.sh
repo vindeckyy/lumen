@@ -64,7 +64,7 @@ VETH_CLIENT="${VETH_CLIENT:-lumen-c}"
 HOST_ADDR="${HOST_ADDR:-10.77.0.1}"
 CLIENT_ADDR="${CLIENT_ADDR:-10.77.0.2}"
 
-CSV_HEADER="loss_rate,jitter_ms,frames_sent,frames_decoded,frames_presented,dropped_frames,decode_errors,fec_recoveries,retransmits,packets_lost,packets_received,bitrate_kbps"
+CSV_HEADER="loss_rate,jitter_ms,frames_sent,frames_decoded,frames_presented,dropped_frames,decode_errors,frames_rebuilt,retransmits,packets_lost,packets_received,bitrate_kbps"
 
 log() { printf '[sweep-loss] %s\n' "$*"; }
 
@@ -187,7 +187,7 @@ chmod 700 "$HOST_RT" "$CLIENT_RT"
 
 start_compositor() {
   local rt="$1" logfile="$2"
-  XDG_RUNTIME_DIR="$rt" WLR_BACKENDS=headless WLR_RENDERER=pixman \
+  XDG_RUNTIME_DIR="$rt" WLR_BACKENDS=headless WLR_RENDERER="${WLR_RENDERER:-pixman}" \
     setsid nohup sway -c /dev/null >"$logfile" 2>&1 &
   echo $!
 }
@@ -367,7 +367,7 @@ print(
             str(count("frames_presented")),
             str(count("dropped_frames")),
             str(count("decode_errors")),
-            str(count("fec_recoveries")),
+            str(count("frames_rebuilt")),
             str(count("retransmits")),
             str(count("packets_lost")),
             str(count("packets_received")),

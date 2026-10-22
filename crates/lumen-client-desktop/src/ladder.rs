@@ -46,7 +46,13 @@ const DROP_LIMIT: f64 = 0.02;
 ///
 /// A machine that was busy for a moment should not lower the quality for
 /// good, so the client tries the bigger picture again after a while.
-const BLOCK_FOR: Duration = Duration::from_secs(300);
+const BLOCK_FOR: Duration = Duration::from_secs(60);
+
+/// How long a request for a size waits to be applied before a later picture of any size is taken.
+///
+/// A frame sent before the host applied the request still has the old size. Without this wait the
+/// client would read that frame as the answer and climb back to the size it just left.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Where the client is on the ladder.
 #[derive(Debug)]
@@ -79,6 +85,10 @@ pub struct Ladder {
     last_look: Instant,
     /// When the client last dropped a frame.
     last_drop: Instant,
+    /// The rung asked for and when it was asked for, until the host sends a picture at it.
+    ///
+    /// While it is set the ladder makes no new request, so requests never stack.
+    pending: Option<(usize, Instant)>,
 }
 
 impl Ladder {
@@ -99,6 +109,7 @@ impl Ladder {
             shown: 0,
             last_look: Instant::now(),
             last_drop: Instant::now(),
+            pending: None,
         }
     }
 
@@ -119,10 +130,19 @@ impl Ladder {
     /// The largest picture the client has seen is the ceiling: it never asks
     /// for one that is bigger.
     pub fn set_size(&mut self, width: u32, height: u32) {
-        if let Some(index) = LADDER.iter().position(|&(w, h)| w == width && h == height) {
-            self.index = index;
-            self.ceiling = self.ceiling.min(index);
-            self.known = true;
+        let Some(index) = LADDER.iter().position(|&(w, h)| w == width && h == height) else {
+            return;
+        };
+        self.ceiling = self.ceiling.min(index);
+        self.known = true;
+        match self.pending {
+            // A picture sent before the request was applied: keep waiting for the requested one.
+            Some((want, since)) if index != want && since.elapsed() < REQUEST_TIMEOUT => {}
+            Some(_) => {
+                self.pending = None;
+                self.index = index;
+            }
+            None => self.index = index,
         }
     }
 
@@ -143,6 +163,9 @@ impl Ladder {
     /// common case.
     pub fn step(&mut self) -> Option<(u32, u32)> {
         if !self.known {
+            return None;
+        }
+        if self.pending.is_some() {
             return None;
         }
         let now = Instant::now();
@@ -168,7 +191,7 @@ impl Ladder {
                 None => (width, Instant::now()),
             });
             self.index += 1;
-            return Some(LADDER[self.index]);
+            return Some(self.request());
         }
         // The client goes back up only when the ceiling allows it, which
         // means the host has sent a bigger picture at some point.
@@ -186,10 +209,16 @@ impl Ladder {
             };
             if allowed {
                 self.index -= 1;
-                return Some(LADDER[self.index]);
+                return Some(self.request());
             }
         }
         None
+    }
+
+    /// Record the rung the index now points at as requested, and return its size.
+    fn request(&mut self) -> (u32, u32) {
+        self.pending = Some((self.index, Instant::now()));
+        LADDER[self.index]
     }
 }
 
@@ -234,6 +263,7 @@ mod tests {
         ladder.record_dropped();
         std::thread::sleep(WINDOW + Duration::from_millis(50));
         assert_eq!(ladder.step(), Some((1024, 576)));
+        ladder.set_size(1024, 576);
         // It is clean for a long time, but it does not go back to the
         // picture it failed at.
         for _ in 0..100 {
@@ -253,6 +283,7 @@ mod tests {
         ladder.record_dropped();
         std::thread::sleep(WINDOW + Duration::from_millis(50));
         assert_eq!(ladder.step(), Some((1024, 576)));
+        ladder.set_size(1024, 576);
         // Ten clean seconds later it would like to go back up, but 1280x720 is
         // the picture it failed at.
         for _ in 0..100 {
@@ -270,6 +301,7 @@ mod tests {
         ladder.record_dropped();
         std::thread::sleep(WINDOW + Duration::from_millis(50));
         assert_eq!(ladder.step(), Some((1024, 576)));
+        ladder.set_size(1024, 576);
         // The block is stale, so the client tries the bigger picture again.
         let stale = Instant::now()
             .checked_sub(BLOCK_FOR + Duration::from_secs(1))
@@ -342,5 +374,50 @@ mod tests {
                 "{width}x{height} is not 16:9"
             );
         }
+    }
+
+    #[test]
+    fn a_stale_picture_does_not_undo_a_pending_request() {
+        let mut ladder = Ladder::new();
+        ladder.set_size(1920, 1080);
+        ladder.record_dropped();
+        std::thread::sleep(WINDOW + Duration::from_millis(50));
+        assert_eq!(ladder.step(), Some((1600, 900)));
+        // A frame sent before the host applied the request still has the old size.
+        ladder.set_size(1920, 1080);
+        assert_eq!(ladder.current(), (1600, 900));
+    }
+
+    #[test]
+    fn a_second_request_waits_until_the_first_is_applied() {
+        let mut ladder = Ladder::new();
+        ladder.set_size(1920, 1080);
+        ladder.record_dropped();
+        std::thread::sleep(WINDOW + Duration::from_millis(50));
+        assert_eq!(ladder.step(), Some((1600, 900)));
+        ladder.record_dropped();
+        std::thread::sleep(WINDOW + Duration::from_millis(50));
+        assert_eq!(ladder.step(), None);
+        // The host applies the request, which clears the pending one.
+        ladder.set_size(1600, 900);
+        ladder.record_dropped();
+        std::thread::sleep(WINDOW + Duration::from_millis(50));
+        assert_eq!(ladder.step(), Some((1280, 720)));
+    }
+
+    #[test]
+    fn a_request_the_host_never_applies_expires() {
+        let mut ladder = Ladder::new();
+        ladder.set_size(1920, 1080);
+        ladder.record_dropped();
+        std::thread::sleep(WINDOW + Duration::from_millis(50));
+        assert_eq!(ladder.step(), Some((1600, 900)));
+        let stale = Instant::now()
+            .checked_sub(REQUEST_TIMEOUT + Duration::from_secs(1))
+            .unwrap_or_else(Instant::now);
+        ladder.pending = Some((1, stale));
+        // Past the timeout, a picture of another size is accepted.
+        ladder.set_size(1280, 720);
+        assert_eq!(ladder.current(), (1280, 720));
     }
 }

@@ -156,7 +156,7 @@ mod tests {
             }
         }
 
-        fn log(&self) -> Vec<Value> {
+        fn log(&self, _after: u64) -> Vec<Value> {
             vec![json!({ "level": "info", "message": "hello" })]
         }
     }

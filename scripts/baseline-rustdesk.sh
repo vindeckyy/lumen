@@ -387,7 +387,7 @@ counters = {
     "frames_presented": presented,
     "dropped_frames": None,
     "decode_errors": None,
-    "fec_recoveries": None,
+    "frames_rebuilt": None,
     "retransmits": None,
     "packets_lost": None,
     "packets_received": packets,
@@ -482,7 +482,7 @@ unmeasured = [
         "reason": "the baseline client's decoder does not expose an error count",
     },
     {
-        "field": "counters.fec_recoveries",
+        "field": "counters.frames_rebuilt",
         "reason": "the baseline has no FEC",
     },
     {

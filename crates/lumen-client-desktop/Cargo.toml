@@ -16,7 +16,9 @@ lumen-crypto = { workspace = true }
 lumen-audio = { workspace = true }
 lumen-host-service = { workspace = true }
 lumen-decode-vaapi = { workspace = true }
+lumen-ffi-va = { workspace = true }
 lumen-render = { workspace = true }
+lumen-input-x11 = { workspace = true }
 rustix = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

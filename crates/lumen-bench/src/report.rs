@@ -20,12 +20,19 @@ pub struct Counters {
     pub frames_decoded: u64,
     /// Frames the client presented.
     pub frames_presented: u64,
+    /// Frames presented without a CPU copy. Reports from before the zero-copy path do not carry it.
+    #[serde(default)]
+    pub zero_copy: u64,
     /// Frames dropped because they were late.
     pub dropped_frames: u64,
+    /// Frames the host converted to NV12 on the GPU. Reports from before it do not carry it.
+    #[serde(default)]
+    pub frames_gpu_converted: u64,
     /// Decode errors.
     pub decode_errors: u64,
-    /// Frames recovered through FEC.
-    pub fec_recoveries: u64,
+    /// Frames rebuilt from FEC parity. Reports from before the rename carry `fec_recoveries` instead.
+    #[serde(default)]
+    pub frames_rebuilt: u64,
     /// Slices retransmitted.
     pub retransmits: u64,
     /// Packets lost on the wire.
@@ -123,13 +130,13 @@ impl RunReport {
         let c = &self.counters;
         let _ = writeln!(
             out,
-            "  frames: sent {} decoded {} presented {} dropped {}",
-            c.frames_sent, c.frames_decoded, c.frames_presented, c.dropped_frames
+            "  frames: sent {} decoded {} presented {} zero-copy {} dropped {}",
+            c.frames_sent, c.frames_decoded, c.frames_presented, c.zero_copy, c.dropped_frames
         );
         let _ = writeln!(
             out,
-            "  errors: decode {} | fec recoveries {} | retransmits {} | packets lost {}",
-            c.decode_errors, c.fec_recoveries, c.retransmits, c.packets_lost
+            "  errors: decode {} | frames rebuilt {} | retransmits {} | packets lost {}",
+            c.decode_errors, c.frames_rebuilt, c.retransmits, c.packets_lost
         );
         let _ = writeln!(out, "  bitrate: {:.1} kbps", self.bitrate_kbps);
         out.push_str("  stage percentiles (ms):\n");

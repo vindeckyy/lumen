@@ -31,6 +31,9 @@ pub enum VaError {
     /// An argument is out of range for libva, or belongs to another display.
     #[error("invalid argument: {0}")]
     Invalid(&'static str),
+    /// The driver does not offer what the wrapper needs, such as video processing.
+    #[error("not supported by this driver: {0}")]
+    Unsupported(&'static str),
     /// The pixel format is not accepted for this operation.
     #[error("pixel format {0:?} is not supported for this operation")]
     UnsupportedFormat(PixelFormat),

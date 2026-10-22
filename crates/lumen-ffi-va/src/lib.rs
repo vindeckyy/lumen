@@ -26,14 +26,16 @@ mod image;
 mod library;
 mod surface;
 pub mod sys;
+mod vpp;
 
 pub use buffer::OwnedVaBuffer;
 pub use config::VaConfig;
 pub use context::VaContext;
 pub use display::VaDisplay;
-pub use dmabuf::read_dmabuf;
+pub use dmabuf::{read_dmabuf, sync_dmabuf};
 pub use error::{VaError, VaResult};
 pub use format::{fourcc, pixel_format, rt_format};
 pub use image::{MappedVaImage, OwnedVaImage};
 pub use library::VaLibrary;
 pub use surface::{DmabufExport, DmabufImport, DmabufPlane, OwnedVaSurface};
+pub use vpp::VideoProcessor;

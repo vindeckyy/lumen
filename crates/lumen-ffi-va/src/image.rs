@@ -53,10 +53,19 @@ impl OwnedVaSurface {
     /// [`VaError::UnsupportedFormat`] if the driver offers no NV12 image format, and
     /// [`VaError::Status`] if libva fails.
     pub fn get_image(&self) -> VaResult<OwnedVaImage> {
+        self.get_image_as(PixelFormat::Nv12)
+    }
+
+    /// Copies this surface into a linear image of `format`, as [`Self::get_image`] does for NV12.
+    ///
+    /// # Errors
+    /// [`VaError::UnsupportedFormat`] if the driver offers no image format with the fourcc of
+    /// `format`, and [`VaError::Status`] if libva fails.
+    pub fn get_image_as(&self, format: PixelFormat) -> VaResult<OwnedVaImage> {
         let lib = self.display.lib();
         let width = fit(self.width)?;
         let height = fit(self.height)?;
-        let nv12 = format::fourcc(PixelFormat::Nv12);
+        let wanted = format::fourcc(format);
 
         let mut image_format = self.display.call(|core, dpy| {
             // SAFETY: `dpy` is initialised and the lock is held. The call takes no out-pointers.
@@ -71,8 +80,8 @@ impl OwnedVaSurface {
             formats.truncate(usize::try_from(count).unwrap_or(0));
             formats
                 .into_iter()
-                .find(|candidate| candidate.fourcc == nv12)
-                .ok_or(VaError::UnsupportedFormat(PixelFormat::Nv12))
+                .find(|candidate| candidate.fourcc == wanted)
+                .ok_or(VaError::UnsupportedFormat(format))
         })?;
 
         let mut image = sys::VAImage::default();

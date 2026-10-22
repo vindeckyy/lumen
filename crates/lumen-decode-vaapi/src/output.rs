@@ -2,7 +2,7 @@
 //! planes are described exactly as the driver exports them.
 
 use lumen_ffi_va::DmabufExport;
-use lumen_protocol::media::{DmabufImage, DmabufPlane as FramePlane, FrameBuffer, PixelFormat};
+use lumen_protocol::media::{FrameBuffer, PixelFormat};
 
 /// `DRM_FORMAT_NV12`, the fourcc VA-API reports for a composed NV12 export.
 const DRM_FORMAT_NV12: u32 = u32::from_le_bytes(*b"NV12");
@@ -71,17 +71,7 @@ pub fn dmabuf_buffer(export: DmabufExport, crop: Crop) -> Option<FrameBuffer> {
     if export.drm_format != DRM_FORMAT_NV12 || export.planes.len() != 2 || !origin_kept || !fits {
         return None;
     }
-    let planes: Vec<FramePlane> = export
-        .planes
-        .iter()
-        .map(|p| FramePlane {
-            offset: p.offset,
-            stride: p.pitch,
-        })
-        .collect();
-    DmabufImage::new(export.fd, export.drm_format, export.modifier, &planes)
-        .ok()
-        .map(FrameBuffer::Dmabuf)
+    export.into_image().ok().map(FrameBuffer::Dmabuf)
 }
 
 #[cfg(test)]

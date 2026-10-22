@@ -153,7 +153,7 @@ start_compositor() {
   local before after before_ipc after_ipc
   before="$(wayland_sockets | wc -l)"
   before_ipc="$(ipc_sockets | wc -l)"
-  WLR_BACKENDS=headless WLR_RENDERER=pixman \
+  WLR_BACKENDS=headless WLR_RENDERER="${WLR_RENDERER:-pixman}" \
     setsid nohup sway -c /dev/null >"$logfile" 2>&1 &
   echo $! >"$RUNTIME_ROOT/sway.pid"
   for _ in $(seq 1 100); do

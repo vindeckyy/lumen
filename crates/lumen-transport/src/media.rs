@@ -299,6 +299,8 @@ pub struct ReceiverStats {
     pub frames_completed: u64,
     /// Incomplete frames dropped without delivery.
     pub frames_dropped: u64,
+    /// Access units delivered only after FEC parity rebuilt a lost slice.
+    pub frames_rebuilt: u64,
 }
 
 /// Receives sealed media datagrams and yields complete access units.
@@ -330,12 +332,6 @@ impl MediaReceiver {
     #[must_use]
     pub fn stats(&self) -> ReceiverStats {
         self.stats
-    }
-
-    /// Slices rebuilt from FEC parity so far.
-    #[must_use]
-    pub fn fec_recoveries(&self) -> u64 {
-        self.assembler.fec_recoveries()
     }
 
     /// Slice indices still missing from `frame_id`, for a NACK.
@@ -386,6 +382,9 @@ impl MediaReceiver {
         let mut completed = self.assembler.push(&slice);
         if completed.is_none() {
             completed = self.assembler.try_recover(frame_id);
+            if completed.is_some() {
+                self.stats.frames_rebuilt += 1;
+            }
         }
         Ok(completed.inspect(|au| {
             self.last_delivered = Some(au.frame_id);
@@ -510,7 +509,7 @@ mod tests {
             .collect();
         let got = feed(&mut rx, &kept).expect("FEC must rebuild both lost slices");
         assert_eq!(got.data, au);
-        assert_eq!(rx.fec_recoveries(), 2);
+        assert_eq!(rx.stats().frames_rebuilt, 1);
     }
 
     #[test]
@@ -664,7 +663,17 @@ mod tests {
         let got = feed(&mut rx, &kept).expect("frame must be recovered from parity");
         assert_eq!(got.data, au);
         assert_eq!(got.capture_ts_us, 7777);
-        assert_eq!(rx.fec_recoveries(), 1);
+        assert_eq!(rx.stats().frames_rebuilt, 1);
+    }
+
+    #[test]
+    fn undamaged_frame_is_not_counted_as_rebuilt() {
+        let (mut tx, mut rx) = pair(ParityLevel::Light);
+        let au = access_unit(20 * SLICE_MAX_PAYLOAD, 6);
+        let datagrams = tx.packetize(&au, 1).unwrap();
+        let got = feed(&mut rx, &datagrams).expect("an intact frame is delivered");
+        assert_eq!(got.data, au);
+        assert_eq!(rx.stats().frames_rebuilt, 0);
     }
 
     #[test]

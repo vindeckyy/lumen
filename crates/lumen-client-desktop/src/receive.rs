@@ -3,6 +3,7 @@
 //! Reads sealed datagrams from the media socket and hands the reassembled
 //! access units to the decode stage.
 
+use std::io::ErrorKind;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::SyncSender;
@@ -16,7 +17,7 @@ use lumen_transport::socket::MediaSocket;
 
 use crate::Counters;
 
-/// How long the receive stage waits before checking for shutdown.
+/// How long one receive waits for a packet before the loop checks for shutdown.
 const POLL: Duration = Duration::from_millis(5);
 /// Size of the datagram read buffer. A media datagram is a 42-byte header
 /// plus a 1200-byte slice, so this is generous.
@@ -160,6 +161,10 @@ impl ReceiveStage {
         // the previous one is either complete or lost.
         let mut last_frame: Option<u32> = None;
 
+        if let Err(e) = self.socket.wait_for_packets(POLL) {
+            eprintln!("lumen-client: media socket cannot wait for packets: {e}");
+            return;
+        }
         while self.running.load(Ordering::SeqCst) {
             match self.socket.recv_from(&mut buffer) {
                 Ok((n, _from)) => {
@@ -191,8 +196,8 @@ impl ReceiveStage {
                         self.link.on_complete(au.frame_id);
                         self.counters.access_units.fetch_add(1, Ordering::Relaxed);
                         self.counters
-                            .fec_recoveries
-                            .store(receiver.fec_recoveries(), Ordering::Relaxed);
+                            .frames_rebuilt
+                            .store(receiver.stats().frames_rebuilt, Ordering::Relaxed);
                         last_frame = Some(au.frame_id);
                         let is_keyframe = contains_idr(&au.data);
                         let frame_id = au.frame_id;
@@ -222,9 +227,9 @@ impl ReceiveStage {
                     // A late, stale or unauthenticated datagram is normal on a
                     // lossy link. The receiver stays usable.
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(POLL);
-                }
+                // A timeout only means no packet came within POLL. The loop checks the running flag
+                // then, and the next packet is read on arrival.
+                Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
                 Err(e) => {
                     eprintln!("lumen-client: media receive failed: {e}");
                     return;

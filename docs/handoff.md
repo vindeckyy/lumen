@@ -501,3 +501,45 @@ curl -s -X POST http://127.0.0.1:8080/api/command \
 - **The 1080p120 case does not reach 120 fps on this machine**, and the reason is the CPU path, not the hardware. That is the next thing to fix, and the measurements to do it are in the two examples.
 - **The repository has one commit.** There is no history to fall back on. Keep backups of anything you are about to rewrite.
 - **The disk filled once.** Watch it.
+
+## 16. Latency plan execution status (P0 to P7)
+
+Measured on the zero-copy path, which needs `WLR_RENDERER=gles2` (see the paragraph after the list). Artefacts: `artifacts/latency/after-*.json`, `after-curve.csv`, `after-tierb.json`, `input.json`, `sweep-gles2/`. The pixman runs from the same session are kept as `artifacts/latency/pixman-*`; the P0 baselines are `artifacts/latency/baseline-*`.
+
+- Loopback end-to-end p50 8.59 ms (P0 baseline 19.02 ms). Netns 8.58 ms (19.18 ms). Loopback with audio, clipboard and resize 8.31 ms. Client present p50 0.047 ms (baseline 4.37 ms). Decode errors 0 in all three.
+- `zero_copy` equals `frames_presented`, and `frames_gpu_converted` equals the host frames captured, in all three runs.
+- Loss sweep at 0.5, 2 and 5 %: decode errors 1, 1, 0 (P0 baseline 3, 4, 7).
+- Tier-B proxy, 300 s on cpus 0,1: dropped frames 0 (P0 baseline 5), decode p50 2.28 ms (baseline 5.18 ms).
+- Input latency through `run-input-latency.sh` (the example injector, XTEST): p50 46 us, p99 115 us, 60000 injected, 0 failures, 0 replays. This script does not exercise the production uinput path.
+- Resize (P5 log): `/api/log?after=N` returns lines with `seq` greater than N, in increasing order; `after=<last seq>` returns `[]`.
+
+Compositor renderer: `run-e2e.sh`, `sweep-loss.sh` and `run-tier-b.sh` start headless sway with `WLR_RENDERER`, default `pixman`. Pixman advertises no dmabuf formats, so the client plan is `Cpu` and host capture is shm. Run with `WLR_RENDERER=gles2` to exercise the zero-copy path (`DirectNv12` and `dmabuf` capture were logged).
+
+Open items:
+
+- `/dev/uinput` is `root:root` mode 0600 and user `hayden` cannot open it. The host runs without input injection and logs `lumen-host: input injection unavailable`. Needs a udev rule or group membership.
+- `lumen-input-x11` test `env_display` fails on a dedicated Xvfb: XI2 raw motion arrives, but no raw key press within 5 s. The client keyboard path is unverified.
+- The client input stage uses raw XI2 events, which are server-wide. While a session runs, every key on the client X server goes to the host, not only keys typed into the lumen window. Needs focus gating before real use.
+- The VPP check lives in `lumen-decode-vaapi` (`decoded_dmabuf_converts_to_bgrx_like_the_cpu_path`), not `lumen-ffi-va --test vpp`. The 64x64 comparison passes with worst channel difference 2. The 1280x720 comparison skips because no fixture exists.
+- Tier-B on the pixman CPU path dropped 33 frames (baseline 5). The cause is not confirmed. One candidate is the P2 `BLOCK_FOR` change from 300 s to 60 s. The zero-copy run drops 0.
+
+
+## 17. Latency plan close-out (2026-10-22)
+
+**State.** `LUMEN_LATENCY_PLAN.md` P0 to P6 are implemented and measured. The P7 acceptance passes on the GPU path, which needs `WLR_RENDERER=gles2`, except step 7: the input run measures the injector only (see the last gotcha). Gates: `cargo fmt --all -- --check` clean, `cargo clippy --workspace --all-targets -- -D warnings` clean, `cargo test --workspace` 575 passed, 0 failed, with `DISPLAY` and `WAYLAND_DISPLAY` unset. Numbers: `docs/benchmarks.md` (latency section). Defects: `docs/known-limits.md` O-7, O-9, O-26, O-30, O-33, O-35, O-36 updated; O-37 to O-41 new. Decisions: `docs/design.md` D76 to D81.
+
+**Changed in this pass.** `crates/lumen-bench/src/report.rs`: `zero_copy`, `frames_gpu_converted` and `frames_rebuilt` now default when absent. The P0 baseline artefacts did not parse before, so the plan's baseline assertion could not run. The `BLOCK_FOR` experiment (300 s) was reverted to the plan's 60 s. Nothing else in code changed.
+
+**Verified this pass.** The `after-*` reports pass the plan's acceptance (`decode_errors` 0, presented at least 97 % of sent, end-to-end p50 8.6 ms against 19.0 ms, client present p50 0.047 ms against 4.37 ms, `zero_copy` equal to presented, `frames_gpu_converted` equal to host frames captured). The two-vCPU proxy on the GPU path drops 0 frames. The host log endpoint returns increasing `seq` and `[]` after the last one. The VPP check passes at 64x64 with a worst channel difference of 2.
+
+**Open decisions for the user.**
+1. Block length after a failed picture (O-39, D78): 60 s as the plan says, 300 s, or a backoff that doubles on each repeated failure. On the CPU path, 60 s gave 29 to 33 dropped frames in 300 s against 14 with 300 s and 5 before the change.
+2. Client input capture is server-wide (O-37). While a session runs, keys typed into other X applications on the client reach the host. Focus gating needs a protocol choice, since X11 cannot see the Wayland window's focus. Privacy-relevant; fix before real use.
+3. `/dev/uinput` is `root:root` 0600 (O-38), so the host runs with no injection. A udev rule or group membership fixes it. That is a system change and was not made.
+
+**Gotchas found this pass.**
+- `lumen-bench report --input X` writes the merged output to `artifacts/m1/e2e.json` unless `--out` is given. It overwrote the committed file once; `git checkout` restored it. Pass `--out` to every read.
+- `crates/lumen-input-x11/tests/env_display.rs` sends XTEST pointer motion (7, 3) and an `a` key press and release to the display it connects to. It was run in a loop over every X socket in `/tmp/.X11-unix` by mistake. It connected to `:2`, `:3`, `:90`, `:93` and `:95`, so those got the motion; `:2`, `:90`, `:93` and `:95` also got the `a` key. The user session on `:0` refused the connection, so it got no input. `:93` and `:95` are root-run servers from `/tmp/opencode` configs, not ours. Run this test only with `DISPLAY` pointing at a dedicated Xvfb: `:90` and `:2` pass.
+- `run-e2e.sh`, `sweep-loss.sh` and `run-tier-b.sh` default to `WLR_RENDERER=pixman`. The plan's commands produce the CPU plan unless `WLR_RENDERER=gles2` is set.
+- `run-input-latency.sh` measures the example injector with XTEST, not the client capture path. The plan's step 5 asked for the latter. Not done.
+

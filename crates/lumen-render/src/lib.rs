@@ -78,6 +78,16 @@ impl Renderer {
             Self::X11(r) => r.poll_events(),
         }
     }
+
+    /// `(DRM fourcc, modifier)` pairs the compositor advertised for dmabuf import. The X11 path
+    /// advertises none, because its frames are presented as CPU BGRX.
+    #[must_use]
+    pub fn dmabuf_formats(&self) -> Vec<(u32, u64)> {
+        match self {
+            Self::Wayland(r) => r.dmabuf_formats(),
+            Self::X11(_) => Vec::new(),
+        }
+    }
 }
 
 impl FrameSink for Renderer {

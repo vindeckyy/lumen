@@ -75,11 +75,11 @@ fn main() -> ExitCode {
     match pipeline.run() {
         Ok(stats) => {
             eprintln!(
-                "lumen-client: {} datagrams, {} access units ({} recovered by FEC), \
+                "lumen-client: {} datagrams, {} access units ({} rebuilt from parity), \
                  {} decoded, {} presented, {} decode errors, {} keyframe requests",
                 stats.datagrams_received,
                 stats.access_units,
-                stats.fec_recoveries,
+                stats.frames_rebuilt,
                 stats.frames_decoded,
                 stats.frames_presented,
                 stats.decode_errors,

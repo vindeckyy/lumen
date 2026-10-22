@@ -28,6 +28,8 @@ pub mod audio;
 pub mod backend;
 pub mod clipboard;
 pub mod control;
+pub mod gpu_convert;
+pub mod input;
 pub mod log;
 pub mod monitors;
 pub mod multi;

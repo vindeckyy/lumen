@@ -93,6 +93,17 @@ impl MediaSocket {
         self.socket.recv_from(buf)
     }
 
+    /// Makes `recv_from` wait up to `timeout` for a packet instead of failing at once with
+    /// `WouldBlock`. A receiver that sleeps on `WouldBlock` delays every packet that arrives
+    /// during the sleep, and a frame's slices arrive in one burst.
+    ///
+    /// # Errors
+    /// Returns an io error if the socket cannot be switched to blocking.
+    pub fn wait_for_packets(&self, timeout: std::time::Duration) -> io::Result<()> {
+        self.socket.set_nonblocking(false)?;
+        self.socket.set_read_timeout(Some(timeout))
+    }
+
     /// The underlying socket, for advanced operations.
     #[must_use]
     pub fn inner(&self) -> &UdpSocket {

@@ -16,6 +16,8 @@ use crate::error::{VaError, VaResult};
 
 /// `DMA_BUF_SYNC_READ`: the CPU reads the buffer.
 const DMA_BUF_SYNC_READ: u64 = 1 << 0;
+/// `DMA_BUF_SYNC_WRITE`: the CPU or a device writes the buffer.
+const DMA_BUF_SYNC_WRITE: u64 = 1 << 1;
 /// `DMA_BUF_SYNC_START`: begin CPU access, waiting for pending GPU writes.
 const DMA_BUF_SYNC_START: u64 = 0;
 /// `DMA_BUF_SYNC_END`: end CPU access, making CPU-side state visible to the device.
@@ -68,6 +70,27 @@ fn dma_buf_sync(fd: BorrowedFd<'_>, flags: u64) -> VaResult<()> {
     unsafe { sync_ioctl::dma_buf_sync(fd.as_raw_fd(), &raw const flags) }
         .map(|_| ())
         .map_err(|errno| VaError::Io(io::Error::from(errno)))
+}
+
+/// Brackets device access to a DMA-BUF with `DMA_BUF_IOCTL_SYNC`.
+///
+/// `read` selects read access (otherwise write). `start` begins the access, waiting for pending
+/// writers; otherwise it ends the access and makes the device's writes visible to later readers.
+///
+/// # Errors
+/// [`VaError::Io`] if the ioctl fails.
+pub fn sync_dmabuf(fd: BorrowedFd<'_>, read: bool, start: bool) -> VaResult<()> {
+    let direction = if read {
+        DMA_BUF_SYNC_READ
+    } else {
+        DMA_BUF_SYNC_WRITE
+    };
+    let edge = if start {
+        DMA_BUF_SYNC_START
+    } else {
+        DMA_BUF_SYNC_END
+    };
+    dma_buf_sync(fd, direction | edge)
 }
 
 /// An active `mmap` region, unmapped on drop.

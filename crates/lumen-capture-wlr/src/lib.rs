@@ -245,6 +245,13 @@ impl WlrCapture {
         self.dmabuf.is_some()
     }
 
+    /// The render node the DMA-BUF frames are allocated on, or `None` when the capture copies into
+    /// `wl_shm`. A consumer that imports the frames must open this node.
+    #[must_use]
+    pub fn render_node(&self) -> Option<&std::path::Path> {
+        self.dmabuf.as_ref().map(Dmabuf::node)
+    }
+
     /// Whether `copy_with_damage` is requested (output refresh at least 1.5x the stream rate).
     #[must_use]
     pub fn uses_damage_copy(&self) -> bool {

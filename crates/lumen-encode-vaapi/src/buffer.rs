@@ -269,6 +269,26 @@ impl MiscFrameRate {
     }
 }
 
+/// EXPERIMENT: `VAEncMiscParameterQualityLevel` payload.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct MiscQuality {
+    ty: sys::VAEncMiscParameterType,
+    q: sys::_VAEncMiscParameterBufferQualityLevel,
+}
+
+impl MiscQuality {
+    pub(crate) fn new(level: u32) -> Self {
+        Self {
+            ty: sys::VAEncMiscParameterTypeQualityLevel,
+            q: sys::_VAEncMiscParameterBufferQualityLevel {
+                quality_level: level,
+                ..Default::default()
+            },
+        }
+    }
+}
+
 /// `(offset, pitch)` of the Y and UV planes of an NV12 image, in bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Nv12Planes {

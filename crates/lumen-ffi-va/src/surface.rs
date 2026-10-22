@@ -2,11 +2,11 @@
 
 use std::{
     fmt,
-    os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd},
+    os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd},
     sync::Arc,
 };
 
-use lumen_protocol::media::PixelFormat;
+use lumen_protocol::media::{DmabufImage, PixelFormat};
 
 use crate::{
     display::{DisplayInner, VaDisplay},
@@ -32,7 +32,7 @@ pub struct DmabufPlane {
 /// A single-object DMA-BUF to import as a surface (see [`OwnedVaSurface::import_dmabuf`]).
 #[derive(Debug, Clone, Copy)]
 pub struct DmabufImport<'a> {
-    /// Only `Nv12` and `P010` are accepted.
+    /// Only `Nv12`, `P010` and `Bgrx` are accepted.
     pub format: PixelFormat,
     pub width: u32,
     pub height: u32,
@@ -60,6 +60,24 @@ pub struct DmabufExport {
     /// The DMA-BUF file descriptor. This struct owns it and closes it on drop.
     pub fd: OwnedFd,
     pub planes: Vec<DmabufPlane>,
+}
+
+impl DmabufExport {
+    /// The export as a [`DmabufImage`], keeping the driver's plane offsets, pitches and modifier.
+    ///
+    /// # Errors
+    /// Returns a description when the export has no planes or more than a frame holds.
+    pub fn into_image(self) -> Result<DmabufImage, String> {
+        let planes: Vec<lumen_protocol::media::DmabufPlane> = self
+            .planes
+            .iter()
+            .map(|plane| lumen_protocol::media::DmabufPlane {
+                offset: plane.offset,
+                stride: plane.pitch,
+            })
+            .collect();
+        DmabufImage::new(self.fd, self.drm_format, self.modifier, &planes)
+    }
 }
 
 impl OwnedVaSurface {
@@ -133,12 +151,14 @@ impl OwnedVaSurface {
     /// (`VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2`).
     ///
     /// # Errors
-    /// [`VaError::UnsupportedFormat`] for formats other than NV12 and P010,
+    /// [`VaError::UnsupportedFormat`] for formats other than NV12, P010 and BGRX,
     /// [`VaError::Invalid`] for a bad plane count, and [`VaError::Status`] if the driver
     /// rejects the layout.
     pub fn import_dmabuf(display: &VaDisplay, import: DmabufImport<'_>) -> VaResult<Self> {
         let code = match import.format {
-            PixelFormat::Nv12 | PixelFormat::P010 => format::fourcc(import.format),
+            PixelFormat::Nv12 | PixelFormat::P010 | PixelFormat::Bgrx => {
+                format::fourcc(import.format)
+            }
             other => return Err(VaError::UnsupportedFormat(other)),
         };
         if import.planes.is_empty() || import.planes.len() > 4 {
@@ -146,7 +166,8 @@ impl OwnedVaSurface {
         }
 
         let mut layer = sys::_VADRMPRIMESurfaceDescriptor__bindgen_ty_2 {
-            drm_format: code,
+            // The DRM layer names the format by DRM fourcc. For BGRX that differs from the VA one.
+            drm_format: import.format.drm_fourcc(),
             num_planes: fit(import.planes.len())?,
             ..sys::_VADRMPRIMESurfaceDescriptor__bindgen_ty_2::default()
         };
@@ -213,6 +234,43 @@ impl OwnedVaSurface {
             width: import.width,
             height: import.height,
         })
+    }
+
+    /// Imports a frame that lives in one DMA-BUF object, such as a decoded or captured picture.
+    ///
+    /// The object size is read from the file, which reports its size as its end offset.
+    ///
+    /// # Errors
+    /// As [`Self::import_dmabuf`], and [`VaError::Io`] if the size cannot be read.
+    pub fn import_frame(
+        display: &VaDisplay,
+        image: &DmabufImage,
+        format: PixelFormat,
+        width: u32,
+        height: u32,
+    ) -> VaResult<Self> {
+        let mut file = std::fs::File::from(image.fd.try_clone()?);
+        let size = std::io::Seek::seek(&mut file, std::io::SeekFrom::End(0))?;
+        let planes: Vec<DmabufPlane> = image
+            .planes()
+            .iter()
+            .map(|plane| DmabufPlane {
+                offset: plane.offset,
+                pitch: plane.stride,
+            })
+            .collect();
+        Self::import_dmabuf(
+            display,
+            DmabufImport {
+                format,
+                width,
+                height,
+                fd: image.fd.as_fd(),
+                size: fit(size)?,
+                modifier: image.modifier,
+                planes: &planes,
+            },
+        )
     }
 
     /// Exports the surface as one DMA-BUF object with composed planes

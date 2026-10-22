@@ -17,6 +17,9 @@ use crate::record::Stats;
 pub struct HostReport {
     /// Frames the capture stage produced.
     pub frames_captured: u64,
+    /// Frames converted to NV12 on the GPU. Older host reports do not carry it.
+    #[serde(default)]
+    pub frames_gpu_converted: u64,
     /// Frames the encoder turned into access units.
     pub frames_encoded: u64,
     /// Datagrams written to the media socket.
@@ -65,6 +68,9 @@ pub struct ClientReport {
     pub frames_decoded: u64,
     /// Frames handed to the compositor.
     pub frames_presented: u64,
+    /// Frames presented without a CPU copy. Older client reports do not carry it.
+    #[serde(default)]
+    pub zero_copy: u64,
     /// Frames the decoder could not decode.
     pub decode_errors: u64,
     /// NACKs sent to the host.
@@ -72,7 +78,7 @@ pub struct ClientReport {
     /// On-demand keyframes requested from the host.
     pub idr_requests: u64,
     /// Access units rebuilt from FEC parity.
-    pub fec_recoveries: u64,
+    pub frames_rebuilt: u64,
     /// How long the client ran, in milliseconds.
     pub duration_ms: u64,
     /// Audio frames the client played.
@@ -169,8 +175,10 @@ pub fn merge(
     report.counters.frames_presented = client.frames_presented;
     report.counters.dropped_frames = host.frames_captured.saturating_sub(client.frames_decoded);
     report.counters.decode_errors = client.decode_errors;
-    report.counters.fec_recoveries = client.fec_recoveries;
+    report.counters.frames_rebuilt = client.frames_rebuilt;
+    report.counters.zero_copy = client.zero_copy;
     report.counters.retransmits = host.retransmits;
+    report.counters.frames_gpu_converted = host.frames_gpu_converted;
     report.counters.packets_lost = host
         .datagrams_sent
         .saturating_sub(client.datagrams_received);

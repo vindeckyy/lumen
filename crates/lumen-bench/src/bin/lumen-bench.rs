@@ -34,7 +34,7 @@ report options:
   --provisional        Stamp the report provisional even if it was not
 
 Assertion names are the counter fields (frames_sent, frames_decoded,
-frames_presented, dropped_frames, decode_errors, fec_recoveries, retransmits,
+frames_presented, dropped_frames, decode_errors, frames_rebuilt, retransmits,
 packets_lost, packets_received, bitrate_kbps) and the stage percentiles
 p50_<stage>_ms, p90_<stage>_ms, p99_<stage>_ms, max_<stage>_ms and
 mean_<stage>_ms, where <stage> is capture, encode, send, recv, decode, present
@@ -227,9 +227,11 @@ fn resolve(report: &RunReport, name: &str) -> Option<f64> {
         "frames_sent" => Some(counters.frames_sent as f64),
         "frames_decoded" => Some(counters.frames_decoded as f64),
         "frames_presented" => Some(counters.frames_presented as f64),
+        "zero_copy" => Some(counters.zero_copy as f64),
+        "frames_gpu_converted" => Some(counters.frames_gpu_converted as f64),
         "dropped_frames" => Some(counters.dropped_frames as f64),
         "decode_errors" => Some(counters.decode_errors as f64),
-        "fec_recoveries" => Some(counters.fec_recoveries as f64),
+        "frames_rebuilt" => Some(counters.frames_rebuilt as f64),
         "retransmits" => Some(counters.retransmits as f64),
         "packets_lost" => Some(counters.packets_lost as f64),
         "packets_received" => Some(counters.packets_received as f64),

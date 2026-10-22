@@ -1,6 +1,6 @@
 //! VA-API H.264 encode session: setup, per-frame encode, bitstream output.
 
-use std::{fmt, os::fd::AsFd};
+use std::{fmt, os::fd::AsFd, path::Path};
 
 use lumen_ffi_va::{
     DmabufImport, DmabufPlane, OwnedVaBuffer, OwnedVaSurface, VaConfig, VaContext, VaDisplay,
@@ -58,8 +58,22 @@ impl H264Encoder {
     /// Names the device candidates tried when no display opens, the missing profile when the
     /// driver has no H.264 encode entry point, and the failing VA call otherwise.
     pub fn new(config: EncoderConfig) -> Result<Self, String> {
+        Self::new_on(config, None)
+    }
+
+    /// As [`Self::new`], on `render_node` when one is given. A consumer that imports DMA-BUFs from
+    /// another stage must encode on the device those buffers live on, so the host passes the
+    /// capture's node.
+    ///
+    /// # Errors
+    /// As [`Self::new`], and the VA error when `render_node` cannot be opened as a display.
+    pub fn new_on(config: EncoderConfig, render_node: Option<&Path>) -> Result<Self, String> {
         config.validate()?;
-        let display = VaDisplay::open_preferred().map_err(|e| format!("VA-API display: {e}"))?;
+        let display = match render_node {
+            Some(node) => VaDisplay::open(node)
+                .map_err(|e| format!("VA-API display on {}: {e}", node.display()))?,
+            None => VaDisplay::open_preferred().map_err(|e| format!("VA-API display: {e}"))?,
+        };
         let vendor = display.vendor();
 
         let profile = H264Profile::LADDER
@@ -123,6 +137,17 @@ impl H264Encoder {
                     &MiscRateControl::cbr(bits_per_second),
                 )
                 .map_err(|e| format!("rate control buffer: {e}"))?,
+            );
+        }
+        if let Ok(level) = std::env::var("LUMEN_ENC_QUALITY") {
+            // EXPERIMENT: temporary, to measure the encode time per quality level.
+            let level: u32 = level.parse().unwrap_or(0);
+            misc.push(
+                ctx.create_buffer(
+                    sys::VAEncMiscParameterBufferType,
+                    &buffer::MiscQuality::new(level),
+                )
+                .map_err(|e| format!("quality buffer: {e}"))?,
             );
         }
 
@@ -478,7 +503,9 @@ impl VideoEncoder for H264Encoder {
         self.check_frame(frame)?;
         let pic = Picture::plan(self.last, self.force_idr, self.idr_count);
         let curr = self.recon[pic.slot].id();
+        let t_import = std::time::Instant::now();
         let imported = self.prepare_input(frame)?;
+        let t_import_us = t_import.elapsed().as_micros();
         let input = imported.as_ref().unwrap_or(&self.input);
 
         let pic_buf = self
@@ -520,6 +547,7 @@ impl VideoEncoder for H264Encoder {
         bufs.extend(slice_hdr.iter());
         bufs.push(&slice_buf);
 
+        let t_render = std::time::Instant::now();
         self.ctx
             .begin_picture(input)
             .map_err(|e| format!("vaBeginPicture: {e}"))?;
@@ -534,12 +562,18 @@ impl VideoEncoder for H264Encoder {
             .map_err(|e| format!("vaEndPicture: {e}"));
         rendered?;
         ended?;
+        eprintln!(
+            "TRACE enc import_us={t_import_us} render_us={}",
+            t_render.elapsed().as_micros()
+        );
 
         // Mapping the coded buffer waits for the encode to finish.
+        let t_map = std::time::Instant::now();
         let data = self
             .coded
             .coded_bytes()
             .map_err(|e| format!("map coded buffer: {e}"))?;
+        eprintln!("TRACE enc map_us={}", t_map.elapsed().as_micros());
         if !nal::starts_with_start_code(&data) {
             return Err("driver coded buffer is not an Annex-B byte stream".into());
         }

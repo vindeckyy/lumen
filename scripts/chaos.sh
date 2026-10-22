@@ -734,7 +734,7 @@ client_counters = {
     "decode_errors": 0,
     "nacks_sent": 0,
     "idr_requests": 0,
-    "fec_recoveries": 0,
+    "frames_rebuilt": 0,
     "duration_ms": 0,
 }
 stage_samples = {}
@@ -827,7 +827,7 @@ report = {
         "frames_presented": frames_presented,
         "dropped_frames": max(0, frames_sent - frames_decoded),
         "decode_errors": client_counters["decode_errors"],
-        "fec_recoveries": client_counters["fec_recoveries"],
+        "frames_rebuilt": client_counters["frames_rebuilt"],
         "retransmits": host_counters["retransmits"],
         "packets_lost": max(
             0, host_counters["datagrams_sent"] - client_counters["datagrams_received"]

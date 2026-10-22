@@ -133,10 +133,10 @@ EOF
 start_compositor() {
   local rt="$1" logfile="$2" config="$3"
   if [ -f "$config" ]; then
-    XDG_RUNTIME_DIR="$rt" WLR_BACKENDS=headless WLR_RENDERER=pixman \
+    XDG_RUNTIME_DIR="$rt" WLR_BACKENDS=headless WLR_RENDERER="${WLR_RENDERER:-pixman}" \
       setsid nohup sway -c "$config" >"$logfile" 2>&1 &
   else
-    XDG_RUNTIME_DIR="$rt" WLR_BACKENDS=headless WLR_RENDERER=pixman \
+    XDG_RUNTIME_DIR="$rt" WLR_BACKENDS=headless WLR_RENDERER="${WLR_RENDERER:-pixman}" \
       setsid nohup sway -c /dev/null >"$logfile" 2>&1 &
   fi
   echo $!

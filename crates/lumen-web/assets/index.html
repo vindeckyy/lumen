@@ -685,7 +685,7 @@
       history.length = 0;
       for (const pair of series) history.push({ p50: pair[0], p99: pair[1] });
       while (history.length > MAX) history.shift();
-      drawChart();
+      chartDirty = true;
     }
 
     // the legend
@@ -778,27 +778,33 @@
 
   }
 
-  // The log is asked for on its own: it changes rarely, and putting it in
-  // the stream would be most of the traffic.
-  let lastLog = "";
+  // The log is asked for by sequence number, so each answer holds only the lines written since the
+  // last one, and the panel appends them. A line the page has shown is never sent again.
+  let lastSeq = 0;
   async function refreshLog() {
     try {
-      const res = await fetch("/api/log", { cache: "no-store" });
+      const res = await fetch("/api/log?after=" + lastSeq, { cache: "no-store" });
       if (!res.ok) return;
       const lines = await res.json();
-      // The log is only redrawn when it changed, because redrawing it is the
-      // most expensive thing the page does.
-      const key = JSON.stringify(lines);
-      if (key === lastLog) return;
-      lastLog = key;
+      if (!lines.length) return;
       const box = $("log");
       const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
-      box.innerHTML = lines.map((l) =>
+      box.insertAdjacentHTML("beforeend", lines.map((l) =>
         '<div class="' + esc(l.level || "info") + '"><span class="t">' + esc(l.time || "") +
-        '</span><span class="m">' + esc(l.message) + "</span></div>").join("");
+        '</span><span class="m">' + esc(l.message) + "</span></div>").join(""));
+      lastSeq = lines[lines.length - 1].seq;
+      // The panel keeps the newest 500 rows, as the host keeps the newest 500 lines.
+      while (box.childElementCount > 500) box.removeChild(box.firstElementChild);
       if (atBottom) box.scrollTop = box.scrollHeight;
     } catch (e) { /* the log is not worth a complaint */ }
   }
+
+  // A state event only marks the chart stale. The chart is drawn at most twice a second, and not
+  // while the page is hidden, where nobody can see it.
+  let chartDirty = false;
+  setInterval(() => {
+    if (chartDirty && !document.hidden) { chartDirty = false; drawChart(); }
+  }, 500);
 
   /* ---------------------------------------------------------------- feed */
   function setLink(up) {

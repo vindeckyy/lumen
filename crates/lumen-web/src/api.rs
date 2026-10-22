@@ -60,8 +60,8 @@ pub trait Api: Send + Sync + 'static {
     /// Returns the refusal when the command is unknown or cannot be applied.
     fn command(&self, name: &str, args: &Value) -> Result<Value, ApiError>;
 
-    /// The recent log lines, oldest first.
-    fn log(&self) -> Vec<Value>;
+    /// The log lines written after sequence number `after`, oldest first. The lines carry `seq`.
+    fn log(&self, after: u64) -> Vec<Value>;
 }
 
 /// The routes the server answers.
@@ -92,6 +92,13 @@ pub fn route(request: &Request) -> Route<'_> {
         ("POST", "/api/command") => Route::Command,
         (_, path) => Route::NotFound(path),
     }
+}
+
+/// The number that `key` holds in a query string such as `after=12&x=1`, if it has one.
+fn query_number(query: &str, key: &str) -> Option<u64> {
+    query
+        .split('&')
+        .find_map(|pair| pair.strip_prefix(key)?.strip_prefix('=')?.parse().ok())
 }
 
 /// Whether a request may change the host.
@@ -145,7 +152,8 @@ pub fn handle(
             Ok(true)
         }
         Route::Log => {
-            let response = Response::json(&Value::Array(api.log()));
+            let after = query_number(&request.query, "after").unwrap_or(0);
+            let response = Response::json(&Value::Array(api.log(after)));
             write_response(stream, &response, true)?;
             Ok(true)
         }

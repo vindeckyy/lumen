@@ -3,7 +3,7 @@
 use std::fs::File;
 use std::io;
 use std::os::fd::{AsFd, OwnedFd};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use drm_fourcc::DrmFourcc;
 use gbm::{BufferObject, Device, Modifier};
@@ -204,14 +204,26 @@ fn describe(bo: &BufferObject<()>, fd: OwnedFd, fourcc: u32) -> Result<DmabufIma
 pub struct Dmabuf {
     device: Device<File>,
     factory: ZwpLinuxDmabufV1,
+    /// The render node the buffers are allocated on, which the GPU consumer must share.
+    node: PathBuf,
 }
 
 impl Dmabuf {
     /// Open the render node matching `main_device`, or the first one if unknown.
     pub fn open(main_device: Option<u64>, factory: ZwpLinuxDmabufV1) -> Result<Self, Error> {
         let path = render_node(main_device)?;
-        let device = Device::new(File::options().read(true).write(true).open(path)?)?;
-        Ok(Self { device, factory })
+        let device = Device::new(File::options().read(true).write(true).open(&path)?)?;
+        Ok(Self {
+            device,
+            factory,
+            node: path,
+        })
+    }
+
+    /// The render node the buffers are allocated on.
+    #[must_use]
+    pub fn node(&self) -> &Path {
+        &self.node
     }
 
     /// Allocate a linear buffer for `spec`, wrapped as a `wl_buffer`.

@@ -17,6 +17,7 @@ pub mod audio;
 pub mod backend;
 pub mod clipboard;
 pub mod events;
+pub mod input;
 pub mod ladder;
 pub mod lowpower;
 pub mod monitors;
@@ -141,10 +142,11 @@ pub(crate) struct Counters {
     access_units: AtomicU64,
     frames_decoded: AtomicU64,
     frames_presented: AtomicU64,
+    frames_zero_copy: AtomicU64,
     decode_errors: AtomicU64,
     nacks_sent: AtomicU64,
     idr_requests: AtomicU64,
-    fec_recoveries: AtomicU64,
+    frames_rebuilt: AtomicU64,
     frames_dropped: AtomicU64,
     duration_ms: AtomicU64,
     audio_played: AtomicU64,
@@ -187,6 +189,8 @@ pub struct ClientStats {
     pub frames_decoded: u64,
     /// Frames handed to the compositor.
     pub frames_presented: u64,
+    /// Frames presented without a CPU copy: the decoder's buffer or a GPU-made one.
+    pub zero_copy: u64,
     /// Frames the decoder could not decode.
     pub decode_errors: u64,
     /// NACKs sent to the host.
@@ -194,7 +198,7 @@ pub struct ClientStats {
     /// On-demand keyframes requested from the host.
     pub idr_requests: u64,
     /// Access units rebuilt from FEC parity.
-    pub fec_recoveries: u64,
+    pub frames_rebuilt: u64,
     /// Audio frames played.
     pub audio_played: u64,
     /// Audio frames dropped because they were late.
@@ -382,6 +386,9 @@ impl ClientPipeline {
                 events: events.clone(),
                 video_clock: Arc::clone(&video_clock),
                 ladder: Arc::clone(&ladder),
+                plan: None,
+                consecutive_errors: 0,
+                converter: None,
             };
             thread::spawn(move || stage.run())
         };
@@ -403,6 +410,19 @@ impl ClientPipeline {
             }
         } else {
             None
+        };
+
+        // Input leaves on its own socket, sealed with the client-to-host media key. The host
+        // listens on the fixed input port of its address.
+        let input_handle = {
+            let local = SocketAddr::new(config.media_addr.ip(), 0);
+            let peer = SocketAddr::new(config.host.ip(), lumen_host_service::input::INPUT_PORT);
+            let cipher = PacketCipher::new(
+                established.aead,
+                established.keys.media_c2h,
+                established.keys.session_id,
+            );
+            input::spawn(local, peer, cipher, Arc::clone(&running))
         };
 
         let control_handle = {
@@ -434,6 +454,9 @@ impl ClientPipeline {
         let _ = present_handle.join();
         if let Some(audio) = audio_handle {
             let _ = audio.join();
+        }
+        if let Some(input) = input_handle {
+            let _ = input.join();
         }
         drop(control_handle);
 
@@ -819,10 +842,11 @@ fn snapshot(counters: &Counters) -> ClientStats {
         access_units: counters.access_units.load(Ordering::Relaxed),
         frames_decoded: counters.frames_decoded.load(Ordering::Relaxed),
         frames_presented: counters.frames_presented.load(Ordering::Relaxed),
+        zero_copy: counters.frames_zero_copy.load(Ordering::Relaxed),
         decode_errors: counters.decode_errors.load(Ordering::Relaxed),
         nacks_sent: counters.nacks_sent.load(Ordering::Relaxed),
         idr_requests: counters.idr_requests.load(Ordering::Relaxed),
-        fec_recoveries: counters.fec_recoveries.load(Ordering::Relaxed),
+        frames_rebuilt: counters.frames_rebuilt.load(Ordering::Relaxed),
         audio_played: counters.audio_played.load(Ordering::Relaxed),
         audio_dropped: counters.audio_dropped.load(Ordering::Relaxed),
         clipboard_roundtrips: counters.clipboard_roundtrips.load(Ordering::Relaxed),

@@ -1,0 +1,28 @@
+{
+  "datagrams_received": 942,
+  "access_units": 305,
+  "frames_decoded": 303,
+  "frames_presented": 303,
+  "zero_copy": 303,
+  "decode_errors": 1,
+  "nacks_sent": 0,
+  "idr_requests": 1,
+  "frames_rebuilt": 178,
+  "audio_played": 0,
+  "audio_dropped": 0,
+  "clipboard_roundtrips": 0,
+  "a_vs_skew_us": [],
+  "audio_datagrams": 0,
+  "audio_auth_failures": 0,
+  "audio_protocol_errors": 0,
+  "audio_stage_played": 0,
+  "audio_stage_dropped": 0,
+  "audio_playback": {
+    "scheduled": 0,
+    "dropped_late": 0,
+    "dropped_no_video_clock": 0,
+    "dropped_no_clock_offset": 0
+  },
+  "frames_dropped": 1,
+  "duration_ms": 10021
+}

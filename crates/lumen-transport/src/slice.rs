@@ -109,8 +109,6 @@ pub struct SliceAssembler {
     parity: HashMap<u32, HashMap<(u16, u16), Vec<u8>>>,
     /// Whether FEC recovery is enabled.
     fec_enabled: bool,
-    /// Number of frames recovered by FEC.
-    fec_recoveries: u64,
 }
 
 impl SliceAssembler {
@@ -121,7 +119,6 @@ impl SliceAssembler {
             frames: HashMap::new(),
             parity: HashMap::new(),
             fec_enabled,
-            fec_recoveries: 0,
         }
     }
 
@@ -137,12 +134,6 @@ impl SliceAssembler {
             self.frames.remove(&oldest);
             self.parity.remove(&oldest);
         }
-    }
-
-    /// Number of frames recovered through FEC.
-    #[must_use]
-    pub fn fec_recoveries(&self) -> u64 {
-        self.fec_recoveries
     }
 
     /// Feed a received slice.
@@ -281,7 +272,6 @@ impl SliceAssembler {
                 }
             }
         }
-        self.fec_recoveries += 1;
         self.finish_if_complete(frame_id)
     }
 
@@ -481,7 +471,6 @@ mod tests {
         let out = a.try_recover(1).unwrap();
         let expected: Vec<u8> = payloads.concat();
         assert_eq!(out.data, expected);
-        assert_eq!(a.fec_recoveries(), 1);
     }
 
     #[test]
@@ -505,6 +494,5 @@ mod tests {
         let out = a.try_recover(1).expect("block 1 must recover slice 9");
         let expected: Vec<u8> = payloads.concat()[..au_len as usize].to_vec();
         assert_eq!(out.data, expected);
-        assert_eq!(a.fec_recoveries(), 1);
     }
 }

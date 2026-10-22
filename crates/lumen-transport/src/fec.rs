@@ -424,6 +424,40 @@ impl ParityLevel {
     }
 }
 
+/// Estimator windows without a loss before the parity level falls.
+///
+/// A window is half a second, so the level falls about three seconds after the last loss.
+pub const PARITY_GOOD_WINDOWS: u32 = 6;
+
+/// Decides when the parity level falls. The level rises at once and never waits on this.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ParityHysteresis {
+    good_windows: u32,
+}
+
+impl ParityHysteresis {
+    /// Called once per estimator window with the level in use, the level the loss asks for and
+    /// the loss of the window that just closed. Returns the level to fall to once
+    /// [`PARITY_GOOD_WINDOWS`] lossless windows have passed while a lower level is wanted.
+    pub fn on_window(
+        &mut self,
+        current: ParityLevel,
+        wanted: ParityLevel,
+        window_loss: f64,
+    ) -> Option<ParityLevel> {
+        if wanted >= current || window_loss > 0.0 {
+            self.good_windows = 0;
+            return None;
+        }
+        self.good_windows += 1;
+        if self.good_windows >= PARITY_GOOD_WINDOWS {
+            self.good_windows = 0;
+            return Some(wanted);
+        }
+        None
+    }
+}
+
 /// The block size a parity level uses, keyed by the level, so the receiver
 /// can map a slice index to its block without being told the level.
 pub type BlockSizes = BTreeMap<u16, usize>;
@@ -541,6 +575,54 @@ mod tests {
     fn gf256_is_a_field() {
         for a in 1..=255u8 {
             assert_eq!(GF.mul(a, GF.inv(a)), 1, "a={a}");
+        }
+    }
+
+    #[test]
+    fn parity_falls_after_six_clean_windows() {
+        let mut h = ParityHysteresis::default();
+        for _ in 0..5 {
+            assert_eq!(
+                h.on_window(ParityLevel::Light, ParityLevel::None, 0.0),
+                None
+            );
+        }
+        assert_eq!(
+            h.on_window(ParityLevel::Light, ParityLevel::None, 0.0),
+            Some(ParityLevel::None)
+        );
+    }
+
+    #[test]
+    fn a_lossy_window_restarts_the_count() {
+        let mut h = ParityHysteresis::default();
+        for _ in 0..4 {
+            h.on_window(ParityLevel::Light, ParityLevel::None, 0.0);
+        }
+        assert_eq!(
+            h.on_window(ParityLevel::Light, ParityLevel::None, 0.01),
+            None
+        );
+        for _ in 0..5 {
+            assert_eq!(
+                h.on_window(ParityLevel::Light, ParityLevel::None, 0.0),
+                None
+            );
+        }
+        assert_eq!(
+            h.on_window(ParityLevel::Light, ParityLevel::None, 0.0),
+            Some(ParityLevel::None)
+        );
+    }
+
+    #[test]
+    fn a_level_that_is_still_wanted_never_falls() {
+        let mut h = ParityHysteresis::default();
+        for _ in 0..20 {
+            assert_eq!(
+                h.on_window(ParityLevel::Light, ParityLevel::Light, 0.0),
+                None
+            );
         }
     }
 }

@@ -48,6 +48,9 @@ const CONFIGURE_TIMEOUT: Duration = Duration::from_secs(2);
 const RELEASE_TIMEOUT: Duration = Duration::from_secs(1);
 /// `wl_shm` buffers per window: the compositor reads one while the next frame fills the other.
 const SHM_SLOTS: usize = 2;
+/// DMA-BUF buffers in flight per window. Each one aliases a decoder pool slot, so they are
+/// bounded; `present.rs` explains why two are safe.
+const DMABUF_SLOTS: usize = 2;
 
 /// Event-driven state shared by every Wayland object the renderer creates.
 #[derive(Default)]
@@ -356,6 +359,18 @@ impl WaylandRenderer {
         }
         let (w, h) = (format::i32_dim(width)?, format::i32_dim(height)?);
         self.ensure_window(width, height, format)?;
+        // At most DMABUF_SLOTS buffers are busy. A decoded picture aliases the decoder's pool, so a
+        // buffer the compositor still reads must not be overwritten by a new import.
+        let deadline = Instant::now() + RELEASE_TIMEOUT;
+        while self
+            .dmabuf_buffers
+            .iter()
+            .filter(|(_, busy)| busy.load(Ordering::Acquire))
+            .count()
+            >= DMABUF_SLOTS
+        {
+            self.pump(remaining(deadline, "a released dmabuf wl_buffer")?)?;
+        }
         self.dmabuf_buffers.retain(|(buffer, busy)| {
             let in_use = busy.load(Ordering::Acquire);
             if !in_use {

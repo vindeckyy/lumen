@@ -23,12 +23,14 @@
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::gpu_convert::GpuConvert;
 use lumen_capture_wlr::{StreamConfig, WlrCapture, read_pixels};
 use lumen_crypto::{PacketCipher, Role, SessionKeys};
 use lumen_encode_vaapi::{EncoderConfig, H264Encoder, RateControl};
@@ -36,7 +38,7 @@ use lumen_protocol::{
     Capabilities, FrameBuffer, FrameSource, PixelFormat, VideoEncoder, VideoFrame, color,
 };
 use lumen_transport::estimator::Estimator;
-use lumen_transport::fec::ParityLevel;
+use lumen_transport::fec::{ParityHysteresis, ParityLevel};
 use lumen_transport::media::send_paced;
 use lumen_transport::pacing::Pacer;
 use lumen_transport::socket::{MediaSocket, SocketOptions};
@@ -75,8 +77,6 @@ const MAX_TARGET_BYTES_PER_SEC: f64 = 50_000_000.0;
 const ESTIMATOR_WINDOW: Duration = Duration::from_millis(500);
 /// How often the host pings the client to estimate the clock offset.
 const PING_INTERVAL: Duration = Duration::from_millis(500);
-/// How many windows without a loss the parity level waits before it falls.
-const PARITY_GOOD_WINDOWS: u32 = 6;
 
 /// How often the host reads its own clipboard. The read blocks, so it must
 /// not run on every round of the control loop.
@@ -234,6 +234,7 @@ pub struct Counters {
     audio_packets: AtomicU64,
     clipboard_roundtrips: AtomicU64,
     resize_events: AtomicU64,
+    frames_gpu_converted: AtomicU64,
 }
 
 /// A snapshot of the pipeline counters.
@@ -241,6 +242,8 @@ pub struct Counters {
 pub struct PipelineStats {
     /// Frames the capture stage produced.
     pub frames_captured: u64,
+    /// Frames converted to NV12 on the GPU, with no CPU copy.
+    pub frames_gpu_converted: u64,
     /// Frames the encoder turned into access units.
     pub frames_encoded: u64,
     /// Datagrams written to the media socket.
@@ -399,6 +402,9 @@ impl HostPipeline {
             Arc::new(Mutex::new(Vec::new()));
         let resolution_changes: Arc<Mutex<Vec<(u32, u32)>>> = Arc::new(Mutex::new(Vec::new()));
         let capture_running = Arc::new(AtomicBool::new(true));
+        // The render node of the capture, which the encoders open. It is published once the
+        // capture is open.
+        let capture_node: Arc<OnceLock<Option<PathBuf>>> = Arc::new(OnceLock::new());
         // The pairing code the host is showing, so the control plane can
         // show it too.
         let pairing_code: Arc<Mutex<Option<u32>>> = Arc::new(Mutex::new(None));
@@ -532,6 +538,7 @@ impl HostPipeline {
                 &capture_running,
                 &mut capture_handle,
                 &capture_ts_us,
+                &capture_node,
                 &pairing_code,
             ) {
                 Ok(handle) => {
@@ -554,6 +561,9 @@ impl HostPipeline {
             let _ = handle.send.join();
             if let Some(audio) = handle.audio {
                 let _ = audio.join();
+            }
+            if let Some(input) = handle.input {
+                let _ = input.stop();
             }
         }
         if let Some(handle) = capture_handle {
@@ -585,6 +595,7 @@ impl HostPipeline {
         capture_running: &Arc<AtomicBool>,
         capture_handle: &mut Option<thread::JoinHandle<()>>,
         capture_ts_us: &Arc<AtomicU64>,
+        capture_node: &Arc<OnceLock<Option<PathBuf>>>,
         pairing_code: &Arc<Mutex<Option<u32>>>,
     ) -> Result<SessionHandles, PipelineError> {
         let config = self.config.clone();
@@ -648,6 +659,13 @@ impl HostPipeline {
             sinks.push(frame_tx);
         }
 
+        // The client seals its input with the client-to-host media key. The cipher is made before
+        // the keys move into the encoder.
+        let input_cipher = PacketCipher::new(
+            established.aead,
+            established.keys.media_c2h,
+            established.keys.session_id,
+        );
         let encode_handle = {
             let stage = EncodeStage {
                 config: config.clone(),
@@ -661,8 +679,9 @@ impl HostPipeline {
                 counters: Arc::clone(&counters),
                 stages: Arc::clone(stages),
                 estimator: Arc::clone(estimator),
-                parity_good_windows: 0,
+                parity_hysteresis: ParityHysteresis::default(),
                 settings: Arc::clone(&self.settings),
+                render_node: Arc::clone(capture_node),
             };
             thread::spawn(move || stage.run())
         };
@@ -686,6 +705,12 @@ impl HostPipeline {
         } else {
             None
         };
+
+        // The input socket shares the media address of the host, so the client reaches it on the
+        // path it already uses for media.
+        let input_addr = SocketAddr::new(config.media_addr.ip(), crate::input::INPUT_PORT);
+        let input_handle =
+            crate::input::InputStage::start(input_addr, input_cipher, config.width, config.height);
 
         let send_handle = {
             let stage = SendStage {
@@ -754,6 +779,7 @@ impl HostPipeline {
                 reopened: Arc::new(AtomicU64::new(0)),
                 capture_ts_us: Arc::clone(capture_ts_us),
                 settings: Arc::clone(&self.settings),
+                render_node: Arc::clone(capture_node),
             };
             *capture_handle = Some(thread::spawn(move || stage.run()));
         }
@@ -765,6 +791,7 @@ impl HostPipeline {
             encode: encode_handle,
             send: send_handle,
             audio: audio_handle,
+            input: input_handle,
             kick,
         })
     }
@@ -829,6 +856,8 @@ struct SessionHandles {
     send: thread::JoinHandle<()>,
     /// The audio stage, when the session carries audio.
     audio: Option<thread::JoinHandle<()>>,
+    /// The input path, when the input socket and uinput are both available.
+    input: Option<crate::input::InputStage>,
     /// Set when the control plane asks for the session to end.
     kick: Arc<AtomicBool>,
 }
@@ -897,9 +926,9 @@ fn host_capabilities() -> Capabilities {
 /// stage is the same for both.
 enum CaptureSource {
     /// A Wayland compositor, captured through wlroots screencopy.
-    Wayland(WlrCapture),
+    Wayland(Box<WlrCapture>),
     /// An X11 server, captured through DRI3, MIT-SHM or GetImage.
-    X11(lumen_capture_x11::X11Capture),
+    X11(Box<lumen_capture_x11::X11Capture>),
 }
 
 impl CaptureSource {
@@ -916,6 +945,14 @@ impl CaptureSource {
         match self {
             Self::Wayland(capture) => capture.take_error().map(|e| e.to_string()),
             Self::X11(capture) => capture.take_error().map(|e| e.to_string()),
+        }
+    }
+
+    /// The render node the DMA-BUF frames are allocated on, or `None` when there is none.
+    fn render_node(&self) -> Option<PathBuf> {
+        match self {
+            Self::Wayland(capture) => capture.render_node().map(Path::to_path_buf),
+            Self::X11(_) => None,
         }
     }
 }
@@ -942,6 +979,8 @@ struct CaptureStage {
     /// The settings the control plane changes, which carry the picture the
     /// client asked for.
     settings: Arc<HostSettings>,
+    /// The render node of the capture, published once it is open for the encoders.
+    render_node: Arc<OnceLock<Option<PathBuf>>>,
 }
 
 impl CaptureStage {
@@ -957,7 +996,7 @@ impl CaptureStage {
                     prefer_cpu: config.prefer_cpu,
                 };
                 WlrCapture::open(&stream_config)
-                    .map(CaptureSource::Wayland)
+                    .map(|capture| CaptureSource::Wayland(Box::new(capture)))
                     .map_err(|e| e.to_string())
             }
             DisplayServer::X11 => {
@@ -968,7 +1007,7 @@ impl CaptureStage {
                     backend: None,
                 };
                 lumen_capture_x11::X11Capture::open(&capture_config)
-                    .map(CaptureSource::X11)
+                    .map(|capture| CaptureSource::X11(Box::new(capture)))
                     .map_err(|e| e.to_string())
             }
         }
@@ -998,6 +1037,25 @@ impl CaptureStage {
                 }
             }
         };
+        let node = capture.render_node();
+        match &node {
+            Some(path) => {
+                crate::host_log!(info "lumen-host: capture backend dmabuf on {}", path.display());
+            }
+            None => {
+                crate::host_log!(info "lumen-host: capture backend without a render node (shm or X11)");
+            }
+        }
+        // The encoders open the device the buffers live on. Publishing it wakes an encoder that
+        // is waiting for the capture to open.
+        let _ = self.render_node.set(node.clone());
+        let mut gpu = node.as_deref().and_then(|path| match GpuConvert::open(path) {
+            Ok(gpu) => Some(gpu),
+            Err(e) => {
+                crate::host_log!(warn "lumen-host: GPU conversion disabled for this session: {e}");
+                None
+            }
+        });
         self.list_monitors();
         let mut failures = 0u32;
 
@@ -1021,22 +1079,28 @@ impl CaptureStage {
                     }
                 }
                 let quality = self.settings.quality();
-                let (nv12, nv12_width, nv12_height) = match to_nv12(&frame, quality) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        self.counters.capture_errors.fetch_add(1, Ordering::Relaxed);
-                        crate::host_log!(warn "lumen-host: frame conversion failed: {e}");
-                        continue;
-                    }
-                };
+                let (buffer, nv12_width, nv12_height, on_gpu) =
+                    match convert_frame(&frame, quality, &mut gpu) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            self.counters.capture_errors.fetch_add(1, Ordering::Relaxed);
+                            crate::host_log!(warn "lumen-host: frame conversion failed: {e}");
+                            continue;
+                        }
+                    };
                 let converted = VideoFrame {
                     width: nv12_width,
                     height: nv12_height,
                     format: PixelFormat::Nv12,
-                    buffer: FrameBuffer::Cpu { data: nv12 },
+                    buffer,
                     capture_ts_us: frame.capture_ts_us,
                     index: frame.index,
                 };
+                if on_gpu {
+                    self.counters
+                        .frames_gpu_converted
+                        .fetch_add(1, Ordering::Relaxed);
+                }
                 self.counters
                     .frames_captured
                     .fetch_add(1, Ordering::Relaxed);
@@ -1109,12 +1173,17 @@ impl CaptureStage {
 
 /// Convert a captured frame into tightly packed NV12.
 ///
-/// The conversion runs on the CPU. The plan puts it on the GPU; the
-/// deviation is recorded as D49.
-fn to_nv12(
+/// The NV12 picture the encoder gets, with the buffer it lives in. A DMA-BUF capture is converted
+/// on the GPU while the GPU works. A failure disables the GPU for the rest of the session, and the
+/// frame is converted on the CPU, as are all frames of a `wl_shm` capture.
+///
+/// The CPU conversion runs on the CPU. The plan puts it on the GPU; the deviation is recorded as
+/// D49. Returns the buffer, its width and height, and whether the GPU made it.
+fn convert_frame(
     frame: &VideoFrame,
     quality: crate::settings::Quality,
-) -> Result<(Vec<u8>, u32, u32), String> {
+    gpu: &mut Option<GpuConvert>,
+) -> Result<(FrameBuffer, u32, u32, bool), String> {
     let (width, height) = (frame.width, frame.height);
     // The picture the client asked for. When it is the size of the capture,
     // the conversion is the plain one; when it is smaller, the conversion
@@ -1122,8 +1191,20 @@ fn to_nv12(
     // capture is the ceiling: a bigger picture would be invented pixels.
     let target_w = quality.width.min(width);
     let target_h = quality.height.min(height);
-    let mut nv12 = vec![0u8; PixelFormat::Nv12.frame_len(target_w, target_h)];
 
+    if let (Some(converter), FrameBuffer::Dmabuf(image)) = (gpu.as_mut(), &frame.buffer)
+        && frame.format == PixelFormat::Bgrx
+    {
+        match converter.convert(image, (width, height), (target_w, target_h)) {
+            Ok(nv12) => return Ok((FrameBuffer::Dmabuf(nv12), target_w, target_h, true)),
+            Err(e) => {
+                crate::host_log!(warn "lumen-host: GPU conversion disabled for this session: {e}");
+                *gpu = None;
+            }
+        }
+    }
+
+    let mut nv12 = vec![0u8; PixelFormat::Nv12.frame_len(target_w, target_h)];
     // The capture is already in BGRX order, so the frame is borrowed and
     // nothing is copied. Copying it would move eight megabytes a frame at
     // 1080p, and the conversion that follows reads every one of them.
@@ -1138,7 +1219,7 @@ fn to_nv12(
             color::bgrx_to_nv12_scaled(&bgrx, width, height, target_w, target_h, &mut nv12)?;
         }
     }
-    Ok((nv12, target_w, target_h))
+    Ok((FrameBuffer::Cpu { data: nv12 }, target_w, target_h, false))
 }
 
 /// Normalise a captured buffer into BGRX order.
@@ -1172,11 +1253,13 @@ struct EncodeStage {
     counters: Arc<Counters>,
     stages: Arc<Mutex<StageRecorder>>,
     estimator: Arc<Mutex<Estimator>>,
-    /// How many windows the link has been lossless, which is how long the
-    /// parity level waits before it falls.
-    parity_good_windows: u32,
+    /// Counts the windows the link has been lossless, which is how long the parity level waits
+    /// before it falls.
+    parity_hysteresis: ParityHysteresis,
     /// The settings the control plane changes.
     settings: Arc<HostSettings>,
+    /// The render node the encoder opens on, published by the capture stage.
+    render_node: Arc<OnceLock<Option<PathBuf>>>,
 }
 
 impl EncodeStage {
@@ -1216,7 +1299,18 @@ impl EncodeStage {
                 .with_rate_control(self.rate_control());
         let mut encoder_width = self.config.width;
         let mut encoder_height = self.config.height;
-        let mut encoder = match H264Encoder::new(encoder_config) {
+        // The encoder runs on the device the capture's DMA-BUFs live on, which is known once the
+        // capture is open.
+        let render_node = loop {
+            if let Some(node) = self.render_node.get() {
+                break node.clone();
+            }
+            if !self.running.load(Ordering::SeqCst) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        let mut encoder = match H264Encoder::new_on(encoder_config, render_node.as_deref()) {
             Ok(e) => e,
             Err(e) => {
                 crate::host_log!(warn "lumen-host: cannot create the encoder: {e}");
@@ -1303,28 +1397,28 @@ impl EncodeStage {
                         // unprotected exactly when the link is about to get
                         // worse.
                         let wanted = self.wanted_parity(estimator.loss_rate());
-                        let current = sender.parity();
-                        if wanted > current {
+                        if wanted > sender.parity() {
                             sender.set_parity(wanted);
-                            self.parity_good_windows = 0;
                             self.counters
                                 .parity_level_changes
                                 .fetch_add(1, Ordering::Relaxed);
-                        } else if wanted < current {
-                            if estimator.loss_rate() <= 0.0 {
-                                self.parity_good_windows += 1;
-                                if self.parity_good_windows >= PARITY_GOOD_WINDOWS {
-                                    sender.set_parity(wanted);
-                                    self.parity_good_windows = 0;
-                                    self.counters
-                                        .parity_level_changes
-                                        .fetch_add(1, Ordering::Relaxed);
-                                }
-                            } else {
-                                self.parity_good_windows = 0;
-                            }
                         }
                         if estimator.window_elapsed() {
+                            // The loss of the window that is closing decides the fall. The
+                            // parity level falls in windows, not frames, so the fall takes the
+                            // same time at any frame rate.
+                            let window_loss = estimator.loss_rate();
+                            let wanted = self.wanted_parity(window_loss);
+                            if let Some(level) = self.parity_hysteresis.on_window(
+                                sender.parity(),
+                                wanted,
+                                window_loss,
+                            ) {
+                                sender.set_parity(level);
+                                self.counters
+                                    .parity_level_changes
+                                    .fetch_add(1, Ordering::Relaxed);
+                            }
                             Some(estimator.on_window_close())
                         } else {
                             None
@@ -1369,7 +1463,7 @@ impl EncodeStage {
                         let config =
                             EncoderConfig::new(frame.width, frame.height, self.settings.fps())
                                 .with_rate_control(self.rate_control());
-                        match H264Encoder::new(config) {
+                        match H264Encoder::new_on(config, render_node.as_deref()) {
                             Ok(fresh) => {
                                 crate::host_log!(info
                                     "lumen-host: the encoder is now {}x{}",
@@ -1749,6 +1843,7 @@ pub(crate) fn snapshot(
 ) -> PipelineStats {
     PipelineStats {
         frames_captured: counters.frames_captured.load(Ordering::Relaxed),
+        frames_gpu_converted: counters.frames_gpu_converted.load(Ordering::Relaxed),
         frames_encoded: counters.frames_encoded.load(Ordering::Relaxed),
         datagrams_sent: counters.datagrams_sent.load(Ordering::Relaxed),
         bytes_sent: counters.bytes_sent.load(Ordering::Relaxed),

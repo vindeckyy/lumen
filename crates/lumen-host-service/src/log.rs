@@ -7,6 +7,7 @@
 //! not grow without limit.
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use serde::Serialize;
@@ -40,12 +41,34 @@ impl Level {
 /// One line of the log.
 #[derive(Debug, Clone, Serialize)]
 pub struct LogLine {
+    /// Position in the log. Later lines have larger numbers, and the numbers keep increasing
+    /// across restarts of the host, so a dashboard can ask for the lines after the last one it saw.
+    pub seq: u64,
     /// How severe the line is.
     pub level: String,
     /// The time the line was written, as HH:MM:SS.
     pub time: String,
     /// The message.
     pub message: String,
+}
+
+/// The sequence number of the last line written.
+static LAST_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// The next sequence number: the clock in microseconds, and never less than one above the last
+/// number given. Seeding from the clock keeps the numbers increasing across restarts.
+fn next_seq() -> u64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_micros()).unwrap_or(u64::MAX));
+    let mut last = LAST_SEQ.load(Ordering::Relaxed);
+    loop {
+        let next = now.max(last + 1);
+        match LAST_SEQ.compare_exchange_weak(last, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return next,
+            Err(seen) => last = seen,
+        }
+    }
 }
 
 fn ring() -> &'static Mutex<VecDeque<LogLine>> {
@@ -85,6 +108,7 @@ pub fn note(level: Level, message: impl AsRef<str>) {
             ring.pop_front();
         }
         ring.push_back(LogLine {
+            seq: next_seq(),
             level: level.name().to_string(),
             time: now(),
             message: stripped,
@@ -99,6 +123,25 @@ pub fn recent(count: usize) -> Vec<LogLine> {
         .lock()
         .map(|ring| ring.iter().rev().take(count).rev().cloned().collect())
         .unwrap_or_default()
+}
+
+/// The lines written after `after`, oldest first, at most `count` of them. A reader that keeps the
+/// last `seq` it saw gets exactly the lines it has not seen.
+#[must_use]
+pub fn recent_after(after: u64, count: usize) -> Vec<LogLine> {
+    ring()
+        .lock()
+        .map(|ring| lines_after(&ring, after, count))
+        .unwrap_or_default()
+}
+
+/// The lines of `ring` with a sequence number above `after`, oldest first, at most `count`.
+fn lines_after(ring: &VecDeque<LogLine>, after: u64, count: usize) -> Vec<LogLine> {
+    ring.iter()
+        .filter(|line| line.seq > after)
+        .take(count)
+        .cloned()
+        .collect()
 }
 
 /// Write a line to the log.
@@ -148,5 +191,29 @@ mod tests {
         let first = lines.iter().position(|l| l.message == "first");
         let second = lines.iter().position(|l| l.message == "second");
         assert!(first < second);
+    }
+
+    #[test]
+    fn lines_after_returns_only_newer_lines_oldest_first() {
+        let ring: VecDeque<LogLine> = (1..=3)
+            .map(|seq| LogLine {
+                seq,
+                level: "info".to_string(),
+                time: String::new(),
+                message: format!("line {seq}"),
+            })
+            .collect();
+        let seqs = |lines: Vec<LogLine>| lines.iter().map(|l| l.seq).collect::<Vec<_>>();
+        assert_eq!(seqs(lines_after(&ring, 1, 500)), vec![2, 3]);
+        assert!(lines_after(&ring, 3, 500).is_empty());
+        assert_eq!(seqs(lines_after(&ring, 0, 2)), vec![1, 2]);
+    }
+
+    #[test]
+    fn every_line_gets_a_later_number_than_the_one_before() {
+        note(Level::Info, "lumen-host: numbered first");
+        note(Level::Info, "lumen-host: numbered second");
+        let lines = recent(500);
+        assert!(lines.windows(2).all(|pair| pair[0].seq < pair[1].seq));
     }
 }
