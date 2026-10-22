@@ -32,8 +32,19 @@ Options:
   --reconnect          Come back on its own when the session ends
   --low-power          Use the low-power profile: one decode thread, a
                        depth-one queue and a 1920x1080 width guard
+  --input <mode>       Which input of the viewer window reaches the host:
+                       off, pointer, keyboard or full (default full)
   --no-input           Do not send the keyboard and pointer of the viewer window
-                       to the host
+                       to the host (the same as --input off)
+  --fit <mode>         How the picture fills the window: fit (whole picture
+                       with bars), crop (fills the window, cuts the overflow) or
+                       stretch (fills the window, each axis on its own)
+  --no-hud             Do not show the heads-up display in the window
+  --resolution <size>  Hold this picture size, written like 1920x1080, whatever
+                       the link does. Without it the client follows the quality
+                       ladder and asks for a bigger picture when it can
+  --fullscreen         Open the window fullscreen
+  --keep-awake         Keep the screen awake while the session runs
   --wake <mac>         Send a wake-on-lan packet to this MAC address before
                        connecting, for a host that is asleep
   --discover           List the hosts that answer on mDNS and exit
@@ -223,7 +234,34 @@ fn parse(args: &[String]) -> Result<(ClientConfig, Option<std::path::PathBuf>, b
             }
             "--reconnect" => config.reconnect = true,
             "--low-power" => config.low_power = true,
-            "--no-input" => config.input = false,
+            "--no-input" => config.input_mode = lumen_client_desktop::input::InputMode::Off,
+            "--input" => {
+                let name = value("--input")?;
+                config.input_mode = lumen_client_desktop::input::InputMode::parse(&name)
+                    .ok_or_else(|| {
+                        ArgError::Invalid(format!(
+                            "--input: {name} is not off, pointer, keyboard or full"
+                        ))
+                    })?;
+            }
+            "--fit" => {
+                let name = value("--fit")?;
+                config.fit = lumen_render::VideoFit::parse(&name).ok_or_else(|| {
+                    ArgError::Invalid(format!("--fit: {name} is not fit, crop or stretch"))
+                })?;
+            }
+            "--no-hud" => config.hud = false,
+            "--resolution" => {
+                let name = value("--resolution")?;
+                config.resolution = lumen_client_desktop::ladder::ResolutionPolicy::hold(&name)
+                    .ok_or_else(|| {
+                        ArgError::Invalid(format!(
+                            "--resolution: {name} is not a size like 1920x1080"
+                        ))
+                    })?;
+            }
+            "--fullscreen" => config.fullscreen = true,
+            "--keep-awake" => config.keep_awake = true,
             "--discover" => discover = true,
             "--wake" => {
                 config.wake = Some(
@@ -252,4 +290,60 @@ fn parse(args: &[String]) -> Result<(ClientConfig, Option<std::path::PathBuf>, b
     config.pairing_code_file = pairing_code_file;
     config.events = events;
     Ok((config, report, discover))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lumen_client_desktop::input::InputMode;
+    use lumen_render::VideoFit;
+
+    /// The configuration of the given arguments.
+    fn config_of(args: &[&str]) -> ClientConfig {
+        let args: Vec<String> = args.iter().map(|a| (*a).to_owned()).collect();
+        parse(&args).expect("the arguments parse").0
+    }
+
+    #[test]
+    fn the_defaults_show_the_picture_with_bars_and_send_the_whole_input() {
+        let config = config_of(&[]);
+        assert_eq!(config.fit, VideoFit::Fit);
+        assert!(config.hud);
+        assert!(!config.fullscreen);
+        assert!(!config.keep_awake);
+        assert_eq!(config.input_mode, InputMode::Full);
+    }
+
+    #[test]
+    fn the_fit_and_the_input_mode_are_read() {
+        let config = config_of(&["--fit", "crop", "--input", "pointer"]);
+        assert_eq!(config.fit, VideoFit::Crop);
+        assert_eq!(config.input_mode, InputMode::Pointer);
+        let config = config_of(&["--fit", "stretch"]);
+        assert_eq!(config.fit, VideoFit::Stretch);
+    }
+
+    #[test]
+    fn no_input_is_the_same_as_the_off_mode() {
+        assert_eq!(config_of(&["--no-input"]).input_mode, InputMode::Off);
+        assert_eq!(config_of(&["--input", "off"]).input_mode, InputMode::Off);
+    }
+
+    #[test]
+    fn the_hud_the_fullscreen_and_the_awake_are_read() {
+        let config = config_of(&["--no-hud", "--fullscreen", "--keep-awake"]);
+        assert!(!config.hud);
+        assert!(config.fullscreen);
+        assert!(config.keep_awake);
+    }
+
+    #[test]
+    fn an_unknown_fit_or_mode_is_refused() {
+        let args = ["--fit", "zoom"].map(String::from);
+        assert!(parse(&args).is_err());
+        let args = ["--input", "mouse"].map(String::from);
+        assert!(parse(&args).is_err());
+        let args = ["--fit"].map(String::from);
+        assert!(parse(&args).is_err());
+    }
 }

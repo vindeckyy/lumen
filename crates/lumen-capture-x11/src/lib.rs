@@ -8,14 +8,8 @@
 //! has changed and the rate allows another frame.
 #![forbid(unsafe_code)]
 
-mod clipboard;
 mod dri3;
 mod shm;
-
-pub use clipboard::{
-    ClipboardError, DEFAULT_TIMEOUT, MAX_CLIPBOARD_BYTES, Selection, Target, X11Clipboard,
-    decode as decode_clipboard, encode as encode_clipboard,
-};
 
 use std::fmt;
 use std::io;

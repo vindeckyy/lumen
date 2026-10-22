@@ -15,10 +15,12 @@
 
 pub mod audio;
 pub mod backend;
+pub mod chords;
 pub mod clipboard;
 pub mod events;
 mod gamepad;
 pub mod host_pin;
+pub(crate) mod hud;
 pub mod input;
 pub mod ladder;
 pub mod lowpower;
@@ -42,7 +44,7 @@ use lumen_host_service::control::{ControlChannel, ControlMessage};
 use lumen_host_service::pairing::{PairingError, load_identity};
 use lumen_host_service::session::{self, PairingChallenge};
 use lumen_protocol::Capabilities;
-use lumen_render::{RenderBackend, Renderer};
+use lumen_render::{RenderBackend, Renderer, VideoFit};
 use lumen_transport::socket::{MediaSocket, SocketOptions};
 
 use crate::events::EventLog;
@@ -85,8 +87,19 @@ pub struct ClientConfig {
     pub events: Option<std::path::PathBuf>,
     /// The low-power profile of the client.
     pub low_power: bool,
-    /// Whether the client sends the keyboard and pointer of its window to the host.
-    pub input: bool,
+    /// Which input of the viewer window the client sends to the host.
+    pub input_mode: input::InputMode,
+    /// How the picture is fitted into the window: whole picture with bars, cropped to fill the
+    /// window, or stretched to fill it.
+    pub fit: VideoFit,
+    /// Whether the window shows the heads-up display.
+    pub hud: bool,
+    /// Whether the window starts fullscreen.
+    pub fullscreen: bool,
+    /// Whether the client keeps the screen awake while the session runs.
+    pub keep_awake: bool,
+    /// How the client chooses the picture size: follow the quality ladder, or hold one size.
+    pub resolution: crate::ladder::ResolutionPolicy,
     /// Address the audio socket binds to. The host sends audio to this port.
     pub audio_addr: SocketAddr,
     /// Whether the session carries audio.
@@ -112,7 +125,12 @@ impl Default for ClientConfig {
             reconnect: false,
             events: None,
             low_power: false,
-            input: true,
+            input_mode: input::InputMode::Full,
+            fit: VideoFit::default(),
+            hud: true,
+            fullscreen: false,
+            keep_awake: false,
+            resolution: crate::ladder::ResolutionPolicy::default(),
             audio_addr: SocketAddr::from(([0, 0, 0, 0], 24802)),
             audio: false,
             audio_config: lumen_audio::AudioConfig {
@@ -167,6 +185,8 @@ pub(crate) struct Counters {
     quality_steps: std::sync::atomic::AtomicU32,
     /// The picture the client showed last, as width by height.
     final_picture: Mutex<String>,
+    /// The round trip to the host, in microseconds.
+    rtt_us: AtomicU64,
     duration_ms: AtomicU64,
     audio_played: AtomicU64,
     audio_dropped: AtomicU64,
@@ -302,14 +322,18 @@ impl ClientPipeline {
         let events = EventLog::new(config.events.clone());
         let mut reconnector = Reconnector::new(ReconnectPolicy::default());
         let mut failure: Option<ClientError> = None;
+        // The renderer lives for the whole run: the window stays open over a reconnect, so the
+        // picture comes back in the same window instead of a new one.
+        let mut renderer: Option<Renderer> = None;
 
         loop {
-            match self.run_session(started, deadline, &events) {
-                Ok(true) => {
-                    events.write("closed", None, None);
-                    break;
-                }
-                Ok(false) => {
+            match self.run_session(started, deadline, &events, renderer.take()) {
+                Ok((closed, returned)) => {
+                    renderer = Some(returned);
+                    if closed {
+                        events.write("closed", None, None);
+                        break;
+                    }
                     if !config.reconnect {
                         break;
                     }
@@ -353,13 +377,15 @@ impl ClientPipeline {
     }
 
     /// Run one session, from the connect to the end of the stream. The answer is whether the
-    /// user closed the viewer window, which ends the client instead of reconnecting.
+    /// user closed the viewer window, which ends the client instead of reconnecting, and the
+    /// renderer, which the next session reuses.
     fn run_session(
         &self,
         started: Instant,
         deadline: Option<Instant>,
         events: &EventLog,
-    ) -> Result<bool, ClientError> {
+        renderer: Option<Renderer>,
+    ) -> Result<(bool, Renderer), ClientError> {
         let config = &self.config;
         let counters = Arc::clone(&self.counters);
 
@@ -408,13 +434,28 @@ impl ClientPipeline {
         events.count_session();
         events.write("established", Some(connect_ms), None);
 
-        let renderer = open_renderer(config.backend, &config.title)?;
+        let renderer = if let Some(renderer) = renderer {
+            renderer
+        } else {
+            // The first session opens the window, with the picture in the chosen fit and,
+            // when asked, fullscreen. A later session reuses that window.
+            let mut renderer = open_renderer(config.backend, &config.title)?;
+            renderer.set_fit(config.fit).map_err(ClientError::Render)?;
+            if config.fullscreen {
+                renderer.set_fullscreen(true).map_err(ClientError::Render)?;
+            }
+            renderer
+        };
         let window_control = Arc::new(WindowControl::default());
+        window_control
+            .keep_awake
+            .store(config.keep_awake, Ordering::SeqCst);
+        window_control.hud.store(config.hud, Ordering::SeqCst);
         // Input is read from the window the renderer presents in, so its id is taken before the
         // renderer moves into the present stage.
         let input_window = match (renderer.x11_window(), renderer.wayland_connection()) {
             (Some(window), _) => Some(input::Window::X11(window)),
-            (None, Some(conn)) => Some(input::Window::Wayland(conn)),
+            (None, Some(conn)) => Some(input::Window::Wayland(conn, renderer.wayland_surface())),
             (None, None) => None,
         };
 
@@ -440,6 +481,18 @@ impl ClientPipeline {
             let _ = request_tx.try_send(ControlMessage::Quality {
                 width,
                 height,
+                fps: 0,
+            });
+        }
+        // A held size is asked for and kept, whatever the link does.
+        if let Some(size) = config.resolution.held() {
+            eprintln!("lumen-client: holding the picture at {}x{}", size.0, size.1);
+            if let Ok(mut ladder) = ladder.lock() {
+                ladder.hold(size);
+            }
+            let _ = request_tx.try_send(ControlMessage::Quality {
+                width: size.0,
+                height: size.1,
                 fps: 0,
             });
         }
@@ -473,6 +526,9 @@ impl ClientPipeline {
                 converter: None,
                 boost: lumen_drm::I915Boost::open(),
                 window: Arc::clone(&window_control),
+                fullscreen: false,
+                keep_awake: false,
+                hud: crate::hud::Hud::default(),
             };
             thread::spawn(move || stage.run())
         };
@@ -503,7 +559,7 @@ impl ClientPipeline {
         // What the host's game wants of the pad's motors, which the control stage receives and
         // the gamepad thread plays.
         let rumble: gamepad::RumbleSlot = Arc::new(Mutex::new(HashMap::new()));
-        let input_handle = if config.input {
+        let input_handle = if config.input_mode.sends_anything() {
             let local = SocketAddr::new(config.media_addr.ip(), 0);
             let peer = SocketAddr::new(config.host.ip(), lumen_host_service::input::INPUT_PORT);
             let cipher = PacketCipher::new(
@@ -523,6 +579,7 @@ impl ClientPipeline {
                         rumble: Arc::clone(&rumble),
                         window: Arc::clone(&window_control),
                     },
+                    config.input_mode,
                 )
             })
         } else {
@@ -553,12 +610,21 @@ impl ClientPipeline {
             if deadline.is_some_and(|d| Instant::now() >= d) {
                 break;
             }
+            if window_control.disconnect.load(Ordering::SeqCst) {
+                eprintln!("lumen-client: the user asked to leave the session");
+                break;
+            }
             thread::sleep(Duration::from_millis(20));
         }
         running.store(false, Ordering::SeqCst);
 
         let _ = receive_handle.join();
-        let _ = present_handle.join();
+        // The present thread hands the renderer back, so the window survives a reconnect.
+        let Ok(renderer) = present_handle.join() else {
+            return Err(ClientError::Render(
+                "the present stage stopped unexpectedly".to_owned(),
+            ));
+        };
         if let Some(audio) = audio_handle {
             let _ = audio.join();
         }
@@ -567,7 +633,9 @@ impl ClientPipeline {
         }
         drop(control_handle);
 
-        Ok(window_control.closed.load(Ordering::SeqCst))
+        let closed = window_control.closed.load(Ordering::SeqCst)
+            || window_control.disconnect.load(Ordering::SeqCst);
+        Ok((closed, renderer))
     }
 }
 
@@ -767,6 +835,14 @@ pub struct WindowControl {
     pub closed: AtomicBool,
     /// The user wants the viewer window fullscreen.
     pub fullscreen: AtomicBool,
+    /// Whether the screen is kept awake while the session runs.
+    pub keep_awake: AtomicBool,
+    /// Whether the pointer is held in the viewer window.
+    pub captured: AtomicBool,
+    /// The user asked to leave the session.
+    pub disconnect: AtomicBool,
+    /// Whether the window shows the heads-up display.
+    pub hud: AtomicBool,
 }
 
 /// The control stage.
@@ -800,7 +876,11 @@ impl ControlStage {
     /// clipboard of the host.
     fn run(mut self) {
         let mut monitors = crate::monitors::MonitorList::new();
-        let mut clipboard: Option<crate::clipboard::WaylandClipboard> = None;
+        let mut clipboard: Option<crate::clipboard::Clipboard> = None;
+        // The text the user copied on this machine goes to the host, so a copy here can be
+        // pasted there.
+        let clipboard_local = crate::clipboard::spawn_reader(Arc::clone(&self.running));
+        let mut clipboard_local_sent: Option<String> = None;
         // The client pings the host so it can measure the control channel's
         // round trip time, and reports the link so the host's estimator has
         // the real loss.
@@ -840,6 +920,17 @@ impl ControlStage {
                     fps: 0,
                 });
             }
+            // The text the user copied on this machine goes to the host, so a copy here can
+            // be pasted there.
+            let local = clipboard_local.lock().ok().and_then(|slot| slot.clone());
+            if let Some(text) = local
+                && clipboard_local_sent.as_deref() != Some(text.as_str())
+            {
+                clipboard_local_sent = Some(text.clone());
+                if let Err(e) = self.channel.send(&ControlMessage::Clipboard { text }) {
+                    eprintln!("lumen-client: cannot send the clipboard: {e}");
+                }
+            }
             while let Ok(request) = self.requests.try_recv() {
                 match &request {
                     ControlMessage::Nack { .. } => {
@@ -862,6 +953,7 @@ impl ControlStage {
                     // the offset between the two clocks.
                     let now = monotonic_us();
                     last_rtt_us = now.saturating_sub(ts_us);
+                    self.counters.rtt_us.store(last_rtt_us, Ordering::Relaxed);
                     // The filter measures the host's clock minus the client's
                     // from the client's side of the exchange; the shared
                     // offset is the client's clock minus the host's.
@@ -910,7 +1002,7 @@ impl ControlStage {
                     // The host offers its clipboard. The client takes it, so
                     // a copy on the host can be pasted on the client.
                     if clipboard.is_none() {
-                        match crate::clipboard::WaylandClipboard::open() {
+                        match crate::clipboard::Clipboard::open() {
                             Ok(device) => clipboard = Some(device),
                             Err(reason) => {
                                 eprintln!("lumen-client: no clipboard available: {reason}");

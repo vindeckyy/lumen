@@ -35,6 +35,8 @@ pub struct WindowEventSource {
     pending: VecDeque<InputAction>,
     /// The cursor the window shows: hotspot, size and premultiplied ARGB pixels.
     cursor: Option<(u16, u16, u16, u16, Vec<u8>)>,
+    /// Whether the pointer is held in the window.
+    grabbed: bool,
 }
 
 impl WindowEventSource {
@@ -57,7 +59,55 @@ impl WindowEventSource {
             buttons_down: BTreeSet::new(),
             pending: VecDeque::new(),
             cursor: None,
+            grabbed: false,
         })
+    }
+
+    /// Holds the pointer in the window, or lets it go.
+    ///
+    /// A grabbed pointer stays in the window and keeps reporting the motion, so a game on the
+    /// host can take the mouse without it leaving the viewer's screen. The grab follows the
+    /// window: a new window is grabbed again.
+    ///
+    /// # Errors
+    /// Returns [`RawError::Select`] when the X server refuses the grab.
+    pub fn set_pointer_grabbed(&mut self, grabbed: bool) -> Result<(), RawError> {
+        if grabbed == self.grabbed {
+            return Ok(());
+        }
+        if grabbed {
+            let reply = self
+                .conn
+                .grab_pointer(
+                    true,
+                    self.window,
+                    xproto::EventMask::BUTTON_PRESS
+                        | xproto::EventMask::BUTTON_RELEASE
+                        | xproto::EventMask::POINTER_MOTION,
+                    xproto::GrabMode::ASYNC,
+                    xproto::GrabMode::ASYNC,
+                    x11rb::NONE,
+                    x11rb::NONE,
+                    x11rb::CURRENT_TIME,
+                )
+                .map_err(|e| RawError::Select(e.to_string()))?
+                .reply()
+                .map_err(|e| RawError::Select(e.to_string()))?;
+            if reply.status != xproto::GrabStatus::SUCCESS {
+                return Err(RawError::Select(format!(
+                    "the pointer grab was refused: {:?}",
+                    reply.status
+                )));
+            }
+        } else {
+            self.conn
+                .ungrab_pointer(x11rb::CURRENT_TIME)
+                .map_err(|e| RawError::Select(e.to_string()))?
+                .check()
+                .map_err(|e| RawError::Select(e.to_string()))?;
+        }
+        self.grabbed = grabbed;
+        Ok(())
     }
 
     /// Shows `argb` (premultiplied, `width` x `height`, one little-endian `u32` per pixel) as the
@@ -169,12 +219,20 @@ impl WindowEventSource {
             return Ok(());
         }
         self.release_all();
+        // The grab belongs to the old window, so it is given up and taken again.
+        let was_grabbed = self.grabbed;
+        if was_grabbed {
+            self.set_pointer_grabbed(false)?;
+        }
         self.window = window;
         if window == 0 {
             return Ok(());
         }
         // A new window starts with the default cursor.
         self.apply_cursor()?;
+        if was_grabbed {
+            self.set_pointer_grabbed(true)?;
+        }
         let mask = xinput::XIEventMask::KEY_PRESS
             | xinput::XIEventMask::KEY_RELEASE
             | xinput::XIEventMask::BUTTON_PRESS

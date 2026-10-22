@@ -260,6 +260,27 @@ Measured on the build machine at 1280x720: the capture stage takes 7.93 ms
 and the whole pipeline 23.2 ms. At 640x360 the capture takes 6.97 ms and
 the pipeline 16.0 ms, and the client uses 25 % less of a core.
 
+### The window stays, the picture is scaled
+
+The stream window is opened once and stays for the whole session, also
+across a reconnect: a picture of a new size is scaled and placed inside the
+window instead of a new window taking its place. The placement follows
+punktfunk's rules — the whole picture with bars, filled and cropped, or
+filled and stretched — and the client can hold one size whatever the link
+does (`--resolution 1920x1080`).
+
+The window carries a heads-up display with the picture size, the rate and
+the round trip to the host. The client answers a few key combinations
+itself instead of sending them on: Ctrl+Alt+Shift with Q holds the pointer
+in the window, with D leaves the session, with H shows or hides the
+display, and F11 or Alt+Enter (and Ctrl+Shift+F) switch fullscreen. On a
+gamepad the Guide and the A are the same chord, and their buttons stay off
+the wire.
+
+A machine without a VA-API driver still shows the stream: the client falls
+back to the OpenH264 software decoder, and the picture arrives as CPU
+memory.
+
 ### The scripts
 
 Every measurement has its own script, and every script writes its own

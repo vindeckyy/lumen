@@ -16,6 +16,9 @@
 
 use std::io::Write;
 use std::os::fd::OwnedFd;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::Duration;
 
 use wayland_client::{
@@ -63,6 +66,166 @@ pub enum ClipboardError {
     /// The payload is larger than the cap.
     #[error("the clipboard payload is larger than the {0} byte limit")]
     TooLarge(usize),
+    /// The X11 clipboard failed.
+    #[error("X11 clipboard: {0}")]
+    X11(#[from] lumen_clipboard_x11::ClipboardError),
+    /// The compositor's data-control device failed.
+    #[error("the compositor's clipboard: {0}")]
+    Control(#[from] lumen_host_service::clipboard::ClipboardError),
+}
+
+/// The clipboard of the machine the client runs on.
+///
+/// A Wayland session has the data device and an X11 session the selection. The client uses the
+/// one that belongs to the display server it runs on, so a copy on the host can be pasted on
+/// the client and the other way round.
+pub enum Clipboard {
+    /// The Wayland clipboard of this machine.
+    Wayland {
+        /// The device that holds the selection, so the peer can read it.
+        hold: WaylandClipboard,
+        /// The device that reads what the user copied here. It is missing when the compositor
+        /// offers no data-control interface, and then the client only holds a selection.
+        read: Option<lumen_host_service::clipboard::WaylandClipboard>,
+    },
+    /// The X11 selection of this machine.
+    X11(lumen_clipboard_x11::X11Clipboard),
+}
+
+/// How often the client reads its own clipboard.
+const READ_POLL: Duration = Duration::from_millis(100);
+
+/// Reads the clipboard of this machine on a thread of its own.
+///
+/// The read waits for the display server to answer, so it cannot run in the control stage:
+/// the stage has to keep the clock exchange going. The text is put in the slot, and the
+/// control stage sends it to the host when it changed.
+#[must_use]
+pub fn spawn_reader(running: Arc<AtomicBool>) -> Arc<Mutex<Option<String>>> {
+    let slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let shared = Arc::clone(&slot);
+    thread::spawn(move || {
+        let mut device = match Clipboard::open() {
+            Ok(device) => Some(device),
+            Err(reason) => {
+                eprintln!("lumen-client: no clipboard available: {reason}");
+                None
+            }
+        };
+        while running.load(Ordering::SeqCst) {
+            if let Some(device) = device.as_mut() {
+                let text = device.read(Duration::from_millis(20)).ok().flatten();
+                if let Some(text) = text {
+                    let mut guard = match shared.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    if guard.as_deref() != Some(text.as_str()) {
+                        *guard = Some(text);
+                    }
+                }
+            }
+            thread::sleep(READ_POLL);
+        }
+    });
+    slot
+}
+
+impl std::fmt::Debug for Clipboard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Wayland { .. } => f.write_str("Clipboard::Wayland"),
+            Self::X11(_) => f.write_str("Clipboard::X11"),
+        }
+    }
+}
+
+impl Clipboard {
+    /// Opens the clipboard of the display server the client runs on.
+    ///
+    /// # Errors
+    /// Returns a description when the display server offers no clipboard.
+    pub fn open() -> Result<Self, ClipboardError> {
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            let hold = WaylandClipboard::open()?;
+            let read = lumen_host_service::clipboard::WaylandClipboard::open().ok();
+            return Ok(Self::Wayland { hold, read });
+        }
+        lumen_clipboard_x11::X11Clipboard::open(None)
+            .map(Self::X11)
+            .map_err(ClipboardError::from)
+    }
+
+    /// The text the client owns, when it owns one.
+    #[must_use]
+    pub fn owned(&self) -> Option<&str> {
+        match self {
+            Self::Wayland { hold, .. } => hold.owned(),
+            Self::X11(device) => device.owned().map(|(_, text)| text),
+        }
+    }
+
+    /// Whether the client may own the clipboard.
+    #[must_use]
+    pub fn may_own(&self) -> bool {
+        match self {
+            Self::Wayland { hold, .. } => hold.may_own(),
+            Self::X11(_) => true,
+        }
+    }
+
+    /// Reads the text the user copied here, when there is one.
+    ///
+    /// # Errors
+    /// Returns a description when the clipboard cannot be read.
+    pub fn read(&mut self, timeout: Duration) -> Result<Option<String>, ClipboardError> {
+        match self {
+            Self::Wayland { read, .. } => match read {
+                Some(device) => device.read(timeout).map_err(ClipboardError::Control),
+                None => Ok(None),
+            },
+            Self::X11(device) => device
+                .read(lumen_clipboard_x11::Selection::Clipboard, timeout)
+                .map_err(ClipboardError::from),
+        }
+    }
+
+    /// Takes the text, so the client owns the clipboard.
+    ///
+    /// # Errors
+    /// Returns a description when the clipboard cannot hold the text.
+    pub fn set(&mut self, text: &str) -> Result<(), ClipboardError> {
+        match self {
+            Self::Wayland { hold, .. } => hold.set(text),
+            Self::X11(device) => device
+                .set(lumen_clipboard_x11::Selection::Clipboard, text)
+                .map_err(ClipboardError::from),
+        }
+    }
+
+    /// Gives the text up.
+    ///
+    /// # Errors
+    /// Returns a description when the clipboard cannot be cleared.
+    pub fn clear(&mut self) -> Result<(), ClipboardError> {
+        match self {
+            Self::Wayland { hold, .. } => hold.clear(),
+            Self::X11(device) => device
+                .set(lumen_clipboard_x11::Selection::Clipboard, "")
+                .map_err(ClipboardError::from),
+        }
+    }
+
+    /// Serves the requests of the other applications for a while.
+    ///
+    /// # Errors
+    /// Returns a description when the clipboard cannot answer.
+    pub fn serve(&mut self, duration: Duration) -> Result<usize, ClipboardError> {
+        match self {
+            Self::Wayland { hold, .. } => hold.serve(duration),
+            Self::X11(device) => device.serve(duration).map_err(ClipboardError::from),
+        }
+    }
 }
 
 /// The state of the Wayland connection.

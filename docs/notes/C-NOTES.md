@@ -263,9 +263,10 @@ should know about them:
 * The host watches the size of the frames the capture delivers
   (`crates/lumen-host-service/src/resize.rs`), counts the changes and sends
   `ControlMessage::ResolutionChanged` to the client.
-* The client rebuilds its surface: `crates/lumen-render/src/resize.rs`
-  holds the policy, and both renderers use it, so a frame of a new size
-  rebuilds the window.
+* The client keeps one window and scales the picture into it:
+  `crates/lumen-render/src/fit.rs` holds the placement policy, and both
+  renderers use it, so a frame of a new size is placed and scaled in the
+  window instead of rebuilding it.
 * **The encoder is not reconfigured.** The encoder is created per session
   with the size of the configuration, so a mode change during a session is
   reported to the client but the encoder keeps the old size and the frames

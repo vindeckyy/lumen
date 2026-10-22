@@ -7,7 +7,7 @@ use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use lumen_capture_x11::{Selection, X11Clipboard};
+use lumen_clipboard_x11::{Selection, X11Clipboard};
 
 struct Xvfb {
     child: Child,
@@ -114,7 +114,7 @@ fn an_oversized_payload_is_refused() {
         return;
     };
     let mut clipboard = X11Clipboard::open(Some(&xvfb.display)).expect("open the clipboard");
-    let big = "x".repeat(lumen_capture_x11::MAX_CLIPBOARD_BYTES + 1);
+    let big = "x".repeat(lumen_clipboard_x11::MAX_CLIPBOARD_BYTES + 1);
     let error = clipboard
         .set(Selection::Clipboard, &big)
         .expect_err("the payload is over the cap");

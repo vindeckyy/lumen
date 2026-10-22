@@ -1,0 +1,17 @@
+[package]
+publish = false
+name = "lumen-clipboard-x11"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "X11 clipboard: the CLIPBOARD and PRIMARY selections."
+
+[dependencies]
+thiserror = { workspace = true }
+x11rb = { workspace = true }
+
+[lints]
+workspace = true

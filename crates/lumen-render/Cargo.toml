@@ -15,9 +15,11 @@ rustix = { workspace = true }
 wayland-client = { workspace = true }
 wayland-protocols = { workspace = true }
 x11rb = { workspace = true, features = ["composite"] }
+font8x8 = { workspace = true }
 
 [dev-dependencies]
 gbm = { workspace = true }
+x11rb = { workspace = true }
 
 [lints]
 workspace = true

@@ -1,0 +1,17 @@
+[package]
+publish = false
+name = "lumen-decode-openh264"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Software H.264 decoder."
+
+[dependencies]
+lumen-protocol = { workspace = true }
+openh264 = { workspace = true }
+
+[lints]
+workspace = true

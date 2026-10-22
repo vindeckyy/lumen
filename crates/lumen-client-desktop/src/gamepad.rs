@@ -56,6 +56,7 @@ pub fn spawn(
     sender: Arc<Mutex<InputSender>>,
     running: Arc<AtomicBool>,
     rumble: RumbleSlot,
+    window: Arc<crate::WindowControl>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut pads: Vec<Pad> = Vec::new();
@@ -91,6 +92,7 @@ pub fn spawn(
                     }
                 }
                 let state = read_state(&pad.device, &pad.ranges, pad.slot);
+                let state = apply_chord(state, &pad.last, &window);
                 if state != pad.last {
                     pad.last = state;
                     send(&sender, state);
@@ -120,6 +122,47 @@ pub fn spawn(
             }
         }
     })
+}
+
+/// The chord of a pad's buttons, with the chord's own buttons off the wire.
+///
+/// The Guide and the A are the client's chord: the host's game never sees them.
+fn apply_chord(
+    state: InputAction,
+    previous: &InputAction,
+    window: &crate::WindowControl,
+) -> InputAction {
+    let InputAction::Gamepad {
+        pad,
+        buttons,
+        lx,
+        ly,
+        rx,
+        ry,
+        lt,
+        rt,
+    } = state
+    else {
+        return state;
+    };
+    let previous_buttons = match previous {
+        InputAction::Gamepad { buttons, .. } => *buttons,
+        _ => 0,
+    };
+    let (masked, chord) = crate::chords::pad_chord(buttons, previous_buttons);
+    if let Some(chord) = chord {
+        crate::input::act_on(window, chord);
+    }
+    InputAction::Gamepad {
+        pad,
+        buttons: masked,
+        lx,
+        ly,
+        rx,
+        ry,
+        lt,
+        rt,
+    }
 }
 
 /// Plays `strong` and `weak` on the pad's motors. The effect is uploaded once and then updated,

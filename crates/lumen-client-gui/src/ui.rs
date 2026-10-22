@@ -15,7 +15,16 @@ use lumen_transport::mdns::FoundHost;
 
 use crate::APP_ID;
 use crate::session::{self, Launch, Session, Trouble, Update};
-use crate::store::{self, Backend, Host, Store};
+use crate::store::{self, Backend, Host, InputMode, PictureFit, Store};
+
+/// The picture sizes the client can hold, from the biggest to the smallest.
+const RESOLUTIONS: [(u32, u32); 5] = [
+    (3840, 2160),
+    (2560, 1440),
+    (1920, 1080),
+    (1280, 720),
+    (960, 540),
+];
 
 /// How often a running session is looked at.
 const SESSION_POLL: Duration = Duration::from_millis(100);
@@ -1367,10 +1376,21 @@ fn preferences(shared: &Shared) {
         .title("Session")
         .description("Changes apply to the next session.")
         .build();
-    let input = adw::SwitchRow::builder()
-        .title("Send Keyboard, Mouse and Controllers")
+    let input = adw::ComboRow::builder()
+        .title("Send Input to the Host")
         .subtitle("Input goes to the host while the stream window has focus")
-        .active(settings.input)
+        .model(&gtk::StringList::new(&[
+            "Keyboard and pointer",
+            "Pointer only",
+            "Keyboard only",
+            "Nothing",
+        ]))
+        .selected(match settings.input {
+            InputMode::Full => 0,
+            InputMode::Pointer => 1,
+            InputMode::Keyboard => 2,
+            InputMode::Off => 3,
+        })
         .build();
     let audio = adw::SwitchRow::builder()
         .title("Play Sound")
@@ -1413,6 +1433,62 @@ fn preferences(shared: &Shared) {
         })
         .build();
     window_group.add(&backend);
+    let fit = adw::ComboRow::builder()
+        .title("How the Picture Fills the Window")
+        .subtitle("Whole picture with bars, filled and cropped, or filled and stretched")
+        .model(&gtk::StringList::new(&[
+            "Whole picture (bars)",
+            "Filled (cropped)",
+            "Filled (stretched)",
+        ]))
+        .selected(match settings.fit {
+            PictureFit::Fit => 0,
+            PictureFit::Crop => 1,
+            PictureFit::Stretch => 2,
+        })
+        .build();
+    window_group.add(&fit);
+    let hud = adw::SwitchRow::builder()
+        .title("Show the Heads-Up Display")
+        .subtitle("The picture size, the rate and the round trip in the corner")
+        .active(settings.hud)
+        .build();
+    window_group.add(&hud);
+    let fullscreen = adw::SwitchRow::builder()
+        .title("Open Fullscreen")
+        .subtitle("The window fills the screen from the start")
+        .active(settings.fullscreen)
+        .build();
+    window_group.add(&fullscreen);
+    let keep_awake = adw::SwitchRow::builder()
+        .title("Keep the Screen Awake")
+        .subtitle("The display does not blank while the session runs")
+        .active(settings.keep_awake)
+        .build();
+    window_group.add(&keep_awake);
+    let resolution = adw::ComboRow::builder()
+        .title("Picture Size")
+        .subtitle("Automatic follows the link; a size is held whatever the link does")
+        .model(&gtk::StringList::new(&[
+            "Automatic",
+            "3840x2160",
+            "2560x1440",
+            "1920x1080",
+            "1280x720",
+            "960x540",
+        ]))
+        .selected(
+            settings
+                .resolution
+                .and_then(|(width, height)| {
+                    RESOLUTIONS
+                        .iter()
+                        .position(|&(w, h)| w == width && h == height)
+                })
+                .map_or(0, |index| u32::try_from(index + 1).unwrap_or(0)),
+        )
+        .build();
+    window_group.add(&resolution);
 
     page.add(&session_group);
     page.add(&performance);
@@ -1420,22 +1496,56 @@ fn preferences(shared: &Shared) {
 
     let update = {
         let weak = Rc::downgrade(shared);
-        let (input, audio, reconnect, low_power, backend) = (
+        let (
+            input,
+            audio,
+            reconnect,
+            low_power,
+            backend,
+            fit,
+            hud,
+            fullscreen,
+            keep_awake,
+            resolution,
+        ) = (
             input.clone(),
             audio.clone(),
             reconnect.clone(),
             low_power.clone(),
             backend.clone(),
+            fit.clone(),
+            hud.clone(),
+            fullscreen.clone(),
+            keep_awake.clone(),
+            resolution.clone(),
         );
         move || {
             let Some(app) = weak.upgrade() else {
                 return;
             };
             app.borrow_mut().store.settings = store::Settings {
-                input: input.is_active(),
+                input: match input.selected() {
+                    1 => InputMode::Pointer,
+                    2 => InputMode::Keyboard,
+                    3 => InputMode::Off,
+                    _ => InputMode::Full,
+                },
                 audio: audio.is_active(),
                 reconnect: reconnect.is_active(),
                 low_power: low_power.is_active(),
+                fit: match fit.selected() {
+                    1 => PictureFit::Crop,
+                    2 => PictureFit::Stretch,
+                    _ => PictureFit::Fit,
+                },
+                hud: hud.is_active(),
+                fullscreen: fullscreen.is_active(),
+                keep_awake: keep_awake.is_active(),
+                resolution: resolution.selected().checked_sub(1).and_then(|index| {
+                    usize::try_from(index)
+                        .ok()
+                        .and_then(|index| RESOLUTIONS.get(index).copied())
+                }),
                 backend: match backend.selected() {
                     1 => Backend::Wayland,
                     2 => Backend::X11,
@@ -1445,11 +1555,21 @@ fn preferences(shared: &Shared) {
             save(&app);
         }
     };
-    for row in [&input, &audio, &reconnect, &low_power] {
+    for row in [
+        &audio,
+        &reconnect,
+        &low_power,
+        &hud,
+        &fullscreen,
+        &keep_awake,
+    ] {
         let update = update.clone();
         row.connect_active_notify(move |_| update());
     }
-    backend.connect_selected_notify(move |_| update());
+    for row in [&input, &backend, &fit, &resolution] {
+        let update = update.clone();
+        row.connect_selected_notify(move |_| update());
+    }
 
     let dialog = adw::PreferencesDialog::new();
     dialog.add(&page);

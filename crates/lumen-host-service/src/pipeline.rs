@@ -842,6 +842,10 @@ impl HostPipeline {
             thread::spawn(move || stage.run())
         };
 
+        // The clipboard is read on a thread of its own, and its device is shared with the
+        // control stage, so a text the client sent can be taken on the host.
+        let (clipboard_rx, clipboard_device) =
+            spawn_clipboard_reader(Arc::clone(&running), config.clipboard_test.clone());
         let control_handle = {
             let stage = ControlStage {
                 channel,
@@ -859,10 +863,8 @@ impl HostPipeline {
                 last_feedback: None,
                 settings: Arc::clone(&self.settings),
                 capture_size: (config.width, config.height),
-                clipboard_rx: spawn_clipboard_reader(
-                    Arc::clone(&running),
-                    config.clipboard_test.clone(),
-                ),
+                clipboard_rx,
+                clipboard_device,
                 clipboard_sent: None,
                 rumble_rx,
                 clock: lumen_audio::MinRttFilter::new(),
@@ -990,41 +992,57 @@ struct SessionHandles {
 fn spawn_clipboard_reader(
     running: Arc<AtomicBool>,
     test_text: Option<String>,
-) -> std::sync::mpsc::Receiver<String> {
+) -> (
+    std::sync::mpsc::Receiver<String>,
+    Arc<Mutex<Option<crate::clipboard::Clipboard>>>,
+) {
     let (tx, rx) = std::sync::mpsc::channel();
+    // The device is shared, so the control stage can take a text the client sent.
+    let shared: Arc<Mutex<Option<crate::clipboard::Clipboard>>> = Arc::new(Mutex::new(None));
+    let slot = Arc::clone(&shared);
     thread::spawn(move || {
-        let mut device = match crate::clipboard::WaylandClipboard::open() {
-            Ok(device) => Some(device),
-            Err(reason) => {
-                crate::host_log!(warn "lumen-host: no clipboard available: {reason}");
-                None
-            }
-        };
         let test_text = test_text;
         while running.load(Ordering::SeqCst) {
-            if let Some(device) = device.as_mut() {
-                // The test hook owns a selection once, so a run can exercise
-                // the round trip without a person copying something.
-                if let Some(text) = test_text.clone()
-                    && device.owned() != Some(text.as_str())
-                    && let Err(reason) = device.set(&text)
-                {
-                    crate::host_log!(warn "lumen-host: cannot set the test clipboard: {reason}");
+            let mut guard = match slot.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            if guard.is_none() {
+                match crate::clipboard::Clipboard::open() {
+                    Ok(device) => *guard = Some(device),
+                    Err(reason) => {
+                        crate::host_log!(warn "lumen-host: no clipboard available: {reason}");
+                        drop(guard);
+                        thread::sleep(CLIPBOARD_POLL);
+                        continue;
+                    }
                 }
-                let text = match device.owned() {
-                    Some(owned) => Some(owned.to_owned()),
-                    None => device.read(Duration::from_millis(20)).ok().flatten(),
-                };
-                if let Some(text) = text
-                    && tx.send(text).is_err()
-                {
-                    return;
-                }
+            }
+            let Some(device) = guard.as_mut() else {
+                continue;
+            };
+            // The test hook owns a selection once, so a run can exercise
+            // the round trip without a person copying something.
+            if let Some(text) = test_text.clone()
+                && device.owned() != Some(text.as_str())
+                && let Err(reason) = device.set(&text)
+            {
+                crate::host_log!(warn "lumen-host: cannot set the test clipboard: {reason}");
+            }
+            let text = match device.owned() {
+                Some(owned) => Some(owned.to_owned()),
+                None => device.read(Duration::from_millis(20)).ok().flatten(),
+            };
+            drop(guard);
+            if let Some(text) = text
+                && tx.send(text).is_err()
+            {
+                return;
             }
             thread::sleep(CLIPBOARD_POLL);
         }
     });
-    rx
+    (rx, shared)
 }
 
 /// The capabilities the host advertises.
@@ -1896,6 +1914,9 @@ struct ControlStage {
     /// sent. The clipboard is read on a thread of its own: the read waits
     /// for the compositor, and the control channel must not wait with it.
     clipboard_rx: std::sync::mpsc::Receiver<String>,
+    /// The clipboard of this machine, shared with the reader thread, so a text the client
+    /// sent can be taken on the host.
+    clipboard_device: Arc<Mutex<Option<crate::clipboard::Clipboard>>>,
     /// The last clipboard text the host sent, so it is not sent twice.
     clipboard_sent: Option<String>,
     /// What games asked of the virtual pads' motors, from the input stage.
@@ -1962,12 +1983,25 @@ impl ControlStage {
                     let _ = self.commands.try_send(EncodeCommand::Recover { last_good });
                 }
                 Ok(Some(ControlMessage::Clipboard { text })) => {
-                    // The client took the clipboard and sent it back, so the
-                    // round trip is complete.
-                    let _ = text;
-                    self.counters
-                        .clipboard_roundtrips
-                        .fetch_add(1, Ordering::Relaxed);
+                    // The client took the clipboard and sent it back, or copied
+                    // something itself. The host takes the text too, so a copy on
+                    // the client can be pasted on the host.
+                    let mut guard = match self.clipboard_device.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    if let Some(device) = guard.as_mut()
+                        && let Err(reason) = device.set(&text)
+                    {
+                        crate::host_log!(warn "lumen-host: cannot take the clipboard: {reason}");
+                    }
+                    // The round trip counts when the client sent back what the host sent. A
+                    // text the client copied itself is not a round trip.
+                    if self.clipboard_sent.as_deref() == Some(text.as_str()) {
+                        self.counters
+                            .clipboard_roundtrips
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
                 }
                 Ok(Some(ControlMessage::Quality { width, height, fps })) => {
                     // The client cannot keep up at the size it has, so it

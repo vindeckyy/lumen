@@ -77,6 +77,91 @@ pub enum ClipboardError {
     /// The selection offers no type the project can read.
     #[error("the selection offers no readable type")]
     NoReadableType,
+    /// The X11 clipboard failed.
+    #[error("X11 clipboard: {0}")]
+    X11(#[from] lumen_clipboard_x11::ClipboardError),
+}
+
+/// The clipboard of the machine the host runs on.
+///
+/// A Wayland session has the data-control device and an X11 session the selection. The host
+/// uses the one that belongs to the display server it runs on, so a copy on the client can be
+/// pasted on the host and the other way round.
+pub enum Clipboard {
+    /// The Wayland data-control device.
+    Wayland(Box<WaylandClipboard>),
+    /// The X11 selection.
+    X11(Box<lumen_clipboard_x11::X11Clipboard>),
+}
+
+impl std::fmt::Debug for Clipboard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Wayland(_) => f.write_str("Clipboard::Wayland"),
+            Self::X11(_) => f.write_str("Clipboard::X11"),
+        }
+    }
+}
+
+impl Clipboard {
+    /// Opens the clipboard of the display server the host runs on.
+    ///
+    /// # Errors
+    /// Returns a description when the display server offers no clipboard.
+    pub fn open() -> Result<Self, ClipboardError> {
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            return WaylandClipboard::open().map(|device| Self::Wayland(Box::new(device)));
+        }
+        lumen_clipboard_x11::X11Clipboard::open(None)
+            .map(|device| Self::X11(Box::new(device)))
+            .map_err(ClipboardError::from)
+    }
+
+    /// The text the host owns, when it owns one.
+    #[must_use]
+    pub fn owned(&self) -> Option<&str> {
+        match self {
+            Self::Wayland(device) => device.owned(),
+            Self::X11(device) => device.owned().map(|(_, text)| text),
+        }
+    }
+
+    /// Reads the text the host does not own, when there is one.
+    ///
+    /// # Errors
+    /// Returns a description when the clipboard cannot be read.
+    pub fn read(&mut self, timeout: Duration) -> Result<Option<String>, ClipboardError> {
+        match self {
+            Self::Wayland(device) => device.read(timeout),
+            Self::X11(device) => device
+                .read(lumen_clipboard_x11::Selection::Clipboard, timeout)
+                .map_err(ClipboardError::from),
+        }
+    }
+
+    /// Takes the text, so the host owns the clipboard.
+    ///
+    /// # Errors
+    /// Returns a description when the clipboard cannot hold the text.
+    pub fn set(&mut self, text: &str) -> Result<(), ClipboardError> {
+        match self {
+            Self::Wayland(device) => device.set(text),
+            Self::X11(device) => device
+                .set(lumen_clipboard_x11::Selection::Clipboard, text)
+                .map_err(ClipboardError::from),
+        }
+    }
+
+    /// Serves the requests of the other applications for a while.
+    ///
+    /// # Errors
+    /// Returns a description when the clipboard cannot answer.
+    pub fn serve(&mut self, duration: Duration) -> Result<usize, ClipboardError> {
+        match self {
+            Self::Wayland(device) => device.serve(duration),
+            Self::X11(device) => device.serve(duration).map_err(ClipboardError::from),
+        }
+    }
 }
 
 /// The state of the Wayland connection.

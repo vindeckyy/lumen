@@ -11,11 +11,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 
+use lumen_decode_openh264::SoftwareDecoder;
 use lumen_decode_vaapi::VaapiDecoder;
 use lumen_ffi_va::{OwnedVaSurface, VaDisplay, VideoProcessor};
 use lumen_host_service::control::ControlMessage;
 use lumen_protocol::color;
-use lumen_protocol::media::DmabufImage;
+use lumen_protocol::media::{DmabufImage, EncodedFrame};
 use lumen_protocol::{FrameBuffer, FrameSink, PixelFormat, VideoDecoder, VideoFrame};
 use lumen_render::Renderer;
 
@@ -89,6 +90,46 @@ impl Converter {
     }
 }
 
+/// The decoder the client presents with.
+///
+/// The hardware decoder is the one that is wanted, but a machine without a VA-API driver still
+/// has to show the stream, so the software decoder takes over when the hardware one is not
+/// there. The software decoder hands out CPU pictures, never DMA-BUFs.
+enum Decoder {
+    /// The VA-API decoder.
+    Hardware(Box<VaapiDecoder>),
+    /// The software decoder.
+    Software(SoftwareDecoder),
+}
+
+impl Decoder {
+    /// Opens the hardware decoder, and falls back to the software one.
+    fn open() -> Result<Self, String> {
+        match VaapiDecoder::new() {
+            Ok(decoder) => Ok(Self::Hardware(Box::new(decoder.dmabuf_output()))),
+            Err(e) => {
+                eprintln!("lumen-client: no hardware decoder ({e}), using the software one");
+                SoftwareDecoder::new().map(Self::Software)
+            }
+        }
+    }
+
+    /// Decodes one access unit.
+    fn decode(&mut self, encoded: &EncodedFrame) -> Result<Option<VideoFrame>, String> {
+        match self {
+            Self::Hardware(decoder) => decoder.decode(encoded),
+            Self::Software(decoder) => decoder.decode(encoded),
+        }
+    }
+
+    /// Asks for DMA-BUF pictures. The software decoder only has CPU pictures.
+    fn set_dmabuf_output(&mut self, enabled: bool) {
+        if let Self::Hardware(decoder) = self {
+            decoder.set_dmabuf_output(enabled);
+        }
+    }
+}
+
 /// The decode and present stage.
 #[derive(Debug)]
 pub struct PresentStage {
@@ -119,6 +160,12 @@ pub struct PresentStage {
     pub(crate) boost: Option<lumen_drm::I915Boost>,
     /// The state of the viewer window that other threads ask for.
     pub(crate) window: Arc<crate::WindowControl>,
+    /// Whether the window is fullscreen now.
+    pub(crate) fullscreen: bool,
+    /// Whether the screen is kept awake now.
+    pub(crate) keep_awake: bool,
+    /// The heads-up display of the window.
+    pub(crate) hud: crate::hud::Hud,
 }
 
 /// How many frames pass between two progress events.
@@ -130,7 +177,7 @@ const WINDOW_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 impl PresentStage {
     /// Handles the window's events and the requests other threads made for it. Returns `false`
     /// when the user closed the window, which ends the session.
-    fn serve_window(&mut self, fullscreen: &mut bool) -> bool {
+    fn serve_window(&mut self) -> bool {
         if let Err(e) = self.renderer.poll_events() {
             eprintln!("lumen-client: the window failed: {e}");
         }
@@ -140,10 +187,18 @@ impl PresentStage {
             return false;
         }
         let wanted = self.window.fullscreen.load(Ordering::Relaxed);
-        if wanted != *fullscreen {
-            *fullscreen = wanted;
+        if wanted != self.fullscreen {
+            self.fullscreen = wanted;
             if let Err(e) = self.renderer.set_fullscreen(wanted) {
                 eprintln!("lumen-client: cannot change the fullscreen state: {e}");
+            }
+        }
+        // The screen stays awake while the session runs, unless the user asks otherwise.
+        let awake = self.window.keep_awake.load(Ordering::Relaxed);
+        if awake != self.keep_awake {
+            self.keep_awake = awake;
+            if let Err(e) = self.renderer.set_keep_awake(awake) {
+                eprintln!("lumen-client: cannot change the idle inhibit: {e}");
             }
         }
         true
@@ -157,10 +212,27 @@ impl PresentStage {
         }
     }
 
-    /// Decode and present until the pipeline stops.
-    pub fn run(mut self) {
-        let mut decoder = match VaapiDecoder::new() {
-            Ok(d) => d.dmabuf_output(),
+    /// Draws the heads-up display over the picture, when it is due.
+    fn draw_hud(&mut self, picture: (u32, u32)) {
+        let Some(lines) = self.hud.lines(picture, &self.counters) else {
+            return;
+        };
+        if let Err(e) = self.renderer.set_overlay(&lines) {
+            eprintln!("lumen-client: cannot draw the display: {e}");
+        }
+    }
+
+    /// Decode and present until the pipeline stops. The renderer comes back, so the window
+    /// survives a reconnect.
+    pub fn run(mut self) -> Renderer {
+        self.run_inner();
+        self.renderer
+    }
+
+    /// The presenting loop.
+    fn run_inner(&mut self) {
+        let mut decoder = match Decoder::open() {
+            Ok(decoder) => decoder,
             Err(e) => {
                 eprintln!("lumen-client: cannot create the decoder: {e}");
                 self.running.store(false, Ordering::SeqCst);
@@ -182,11 +254,10 @@ impl PresentStage {
         // When the client last asked to recover. The answer can be lost like any frame, and
         // the gate refuses everything until it arrives, so the request is repeated.
         let mut asked_at: Option<std::time::Instant> = None;
-        let mut fullscreen = false;
         while self.running.load(Ordering::SeqCst) {
             // The window is served between frames too, so a close or a fullscreen request is
             // answered while the host sends nothing.
-            if !self.serve_window(&mut fullscreen) {
+            if !self.serve_window() {
                 return;
             }
             let access_unit = match self.access_units.recv_timeout(WINDOW_POLL) {
@@ -268,6 +339,11 @@ impl PresentStage {
                                     None,
                                     Some(format!("presented={presented} errors={errors}")),
                                 );
+                            }
+                            // The heads-up display shows the picture, the rate and the round
+                            // trip, a few times a second.
+                            if self.window.hud.load(Ordering::Relaxed) {
+                                self.draw_hud((frame.width, frame.height));
                             }
                         }
                         Err(e) if from_dmabuf => self.zero_copy_failed(&e),

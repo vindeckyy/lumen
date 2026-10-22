@@ -43,30 +43,85 @@ pub enum Backend {
     X11,
 }
 
+/// Which input of the viewer reaches the host.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InputMode {
+    /// The keyboard and the pointer.
+    #[default]
+    Full,
+    /// The pointer only.
+    Pointer,
+    /// The keyboard only.
+    Keyboard,
+    /// Nothing: the client only watches.
+    Off,
+}
+
+/// How the picture fills the stream window.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PictureFit {
+    /// The whole picture, with bars.
+    #[default]
+    Fit,
+    /// The window is filled, and the overflow is cut off.
+    Crop,
+    /// The window is filled, each axis on its own.
+    Stretch,
+}
+
+impl PictureFit {
+    /// The name the client's `--fit` option takes.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Fit => "fit",
+            Self::Crop => "crop",
+            Self::Stretch => "stretch",
+        }
+    }
+}
+
 /// The settings of every session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     /// The window system of the stream window.
     pub backend: Backend,
-    /// Send the keyboard, the pointer, gamepads, touch and pens to the host.
-    pub input: bool,
+    /// Which input of the viewer reaches the host.
+    pub input: InputMode,
     /// Play the host's audio.
     pub audio: bool,
     /// Come back on its own when the connection drops.
     pub reconnect: bool,
     /// One decode thread and at most 1080p, for slower machines.
     pub low_power: bool,
+    /// How the picture fills the window.
+    pub fit: PictureFit,
+    /// Show the heads-up display in the window.
+    pub hud: bool,
+    /// Open the window fullscreen.
+    pub fullscreen: bool,
+    /// Keep the screen awake while the session runs.
+    pub keep_awake: bool,
+    /// The picture size to hold, as width by height. `None` follows the quality ladder.
+    pub resolution: Option<(u32, u32)>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             backend: Backend::Auto,
-            input: true,
+            input: InputMode::Full,
             audio: true,
             reconnect: true,
             low_power: false,
+            fit: PictureFit::Fit,
+            hud: true,
+            fullscreen: false,
+            keep_awake: false,
+            resolution: None,
         }
     }
 }

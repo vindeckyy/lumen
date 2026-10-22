@@ -59,6 +59,39 @@ const BLOCK_MAX: Duration = Duration::from_mins(16);
 /// client would read that frame as the answer and climb back to the size it just left.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// How the client chooses the picture size.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ResolutionPolicy {
+    /// Follow the quality ladder: the client asks for a bigger picture when the link allows it.
+    #[default]
+    Adaptive,
+    /// Ask for this size and keep it, whatever the link does.
+    Hold((u32, u32)),
+}
+
+impl ResolutionPolicy {
+    /// The size the policy holds, when it holds one.
+    #[must_use]
+    pub fn held(self) -> Option<(u32, u32)> {
+        match self {
+            Self::Adaptive => None,
+            Self::Hold(size) => Some(size),
+        }
+    }
+
+    /// The policy that holds the size `name`, which is written as `1920x1080`.
+    #[must_use]
+    pub fn hold(name: &str) -> Option<Self> {
+        let (width, height) = name.split_once('x')?;
+        let width = width.trim().parse::<u32>().ok()?;
+        let height = height.trim().parse::<u32>().ok()?;
+        if width == 0 || height == 0 {
+            return None;
+        }
+        Some(Self::Hold((width, height)))
+    }
+}
+
 /// Where the client is on the ladder.
 #[derive(Debug)]
 pub struct Ladder {
@@ -97,6 +130,10 @@ pub struct Ladder {
     ///
     /// While it is set the ladder makes no new request, so requests never stack.
     pending: Option<(usize, Instant)>,
+    /// The size the client holds, when the user asked for one.
+    ///
+    /// A held picture never moves: the ladder neither climbs nor falls.
+    hold: Option<(u32, u32)>,
 }
 
 impl Ladder {
@@ -119,6 +156,7 @@ impl Ladder {
             last_look: Instant::now(),
             last_drop: Instant::now(),
             pending: None,
+            hold: None,
         }
     }
 
@@ -126,6 +164,23 @@ impl Ladder {
     #[must_use]
     pub fn current(&self) -> (u32, u32) {
         LADDER[self.index]
+    }
+
+    /// Hold one picture size, whatever the link does.
+    ///
+    /// The client asks for this size and keeps it: the ladder neither climbs nor falls. A size
+    /// that is not on the ladder is held too, and the host is asked for it as it is.
+    pub fn hold(&mut self, size: (u32, u32)) {
+        self.hold = Some(size);
+        if let Some(index) = LADDER.iter().position(|&(w, h)| w == size.0 && h == size.1) {
+            self.index = index;
+        }
+    }
+
+    /// The size the client holds, when it holds one.
+    #[must_use]
+    pub fn held(&self) -> Option<(u32, u32)> {
+        self.hold
     }
 
     /// The index on the ladder.
@@ -144,6 +199,10 @@ impl Ladder {
         };
         self.ceiling = self.ceiling.min(index);
         self.known = true;
+        if self.hold.is_some() {
+            // The user asked for one size: the ladder stays where it is.
+            return;
+        }
         match self.pending {
             // A picture sent before the request was applied: keep waiting for the requested one.
             Some((want, since)) if index != want && since.elapsed() < REQUEST_TIMEOUT => {}
@@ -180,6 +239,10 @@ impl Ladder {
     /// common case.
     pub fn step(&mut self) -> Option<(u32, u32)> {
         if !self.known {
+            return None;
+        }
+        if self.hold.is_some() {
+            // The client holds one size: it never asks for another.
             return None;
         }
         if self.pending.is_some() {
@@ -448,6 +511,41 @@ mod tests {
         std::thread::sleep(WINDOW + Duration::from_millis(50));
         assert_eq!(ladder.step(), None);
         assert_eq!(ladder.current(), (640, 360));
+    }
+
+    #[test]
+    fn a_held_picture_never_moves() {
+        let mut ladder = Ladder::new();
+        ladder.set_size(1920, 1080);
+        ladder.hold((1280, 720));
+        assert_eq!(ladder.held(), Some((1280, 720)));
+        assert_eq!(ladder.current(), (1280, 720));
+        // Neither a picture the host sends nor a dropped frame moves it.
+        ladder.set_size(1920, 1080);
+        assert_eq!(ladder.current(), (1280, 720));
+        ladder.record_dropped();
+        std::thread::sleep(WINDOW + Duration::from_millis(50));
+        assert_eq!(ladder.step(), None);
+        assert_eq!(ladder.current(), (1280, 720));
+    }
+
+    #[test]
+    fn a_held_picture_that_is_not_on_the_ladder_is_kept_as_it_is() {
+        let mut ladder = Ladder::new();
+        ladder.hold((1600, 900));
+        assert_eq!(ladder.held(), Some((1600, 900)));
+        assert_eq!(ladder.step(), None);
+    }
+
+    #[test]
+    fn a_size_is_read_from_its_text() {
+        assert_eq!(
+            ResolutionPolicy::hold("1920x1080"),
+            Some(ResolutionPolicy::Hold((1920, 1080)))
+        );
+        assert_eq!(ResolutionPolicy::hold("1920"), None);
+        assert_eq!(ResolutionPolicy::hold("0x1080"), None);
+        assert_eq!(ResolutionPolicy::hold("wide"), None);
     }
 
     #[test]

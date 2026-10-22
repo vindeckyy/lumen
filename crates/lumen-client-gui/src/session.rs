@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{Receiver, channel};
 
-use crate::store::{Backend, Settings};
+use crate::store::{Backend, InputMode, Settings};
 
 /// How many lines of the client's standard error are kept for the details of a failure.
 const TAIL_LINES: usize = 30;
@@ -79,8 +79,24 @@ pub fn client_args(launch: &Launch) -> Vec<String> {
         Backend::Wayland => args.extend(["--present".to_owned(), "wayland".to_owned()]),
         Backend::X11 => args.extend(["--present".to_owned(), "x11".to_owned()]),
     }
-    if !settings.input {
-        args.push("--no-input".to_owned());
+    match settings.input {
+        InputMode::Full => {}
+        InputMode::Pointer => args.extend(["--input".to_owned(), "pointer".to_owned()]),
+        InputMode::Keyboard => args.extend(["--input".to_owned(), "keyboard".to_owned()]),
+        InputMode::Off => args.push("--no-input".to_owned()),
+    }
+    args.extend(["--fit".to_owned(), settings.fit.name().to_owned()]);
+    if !settings.hud {
+        args.push("--no-hud".to_owned());
+    }
+    if settings.fullscreen {
+        args.push("--fullscreen".to_owned());
+    }
+    if settings.keep_awake {
+        args.push("--keep-awake".to_owned());
+    }
+    if let Some((width, height)) = settings.resolution {
+        args.extend(["--resolution".to_owned(), format!("{width}x{height}")]);
     }
     if settings.audio {
         args.push("--with-audio".to_owned());
@@ -416,16 +432,19 @@ mod tests {
                 "/r/e.jsonl",
                 "--title",
                 "Desk — Lumen",
+                "--fit",
+                "fit",
                 "--with-audio",
                 "--reconnect",
             ]
         );
         let mut l = launch(Settings {
             backend: Backend::X11,
-            input: false,
+            input: InputMode::Off,
             audio: false,
             reconnect: false,
             low_power: true,
+            ..Settings::default()
         });
         l.mac = Some("aa:bb:cc:dd:ee:ff".into());
         l.host = "[fe80::1]:24800".parse().unwrap();
@@ -524,6 +543,33 @@ mod tests {
         );
         assert_eq!(title("something else"), "Connection Failed");
         assert!(explain("Connection refused", host).advice.contains(host));
+    }
+
+    #[test]
+    fn the_window_settings_reach_the_client() {
+        let l = launch(Settings {
+            fit: crate::store::PictureFit::Crop,
+            hud: false,
+            fullscreen: true,
+            keep_awake: true,
+            resolution: Some((1920, 1080)),
+            input: InputMode::Pointer,
+            ..Settings::default()
+        });
+        let args = client_args(&l);
+        for flags in [
+            &["--fit", "crop"][..],
+            &["--no-hud"],
+            &["--fullscreen"],
+            &["--keep-awake"],
+            &["--resolution", "1920x1080"],
+            &["--input", "pointer"],
+        ] {
+            assert!(
+                args.windows(flags.len()).any(|w| w == flags),
+                "{flags:?} in {args:?}"
+            );
+        }
     }
 
     #[test]

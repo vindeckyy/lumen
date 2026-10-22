@@ -16,7 +16,9 @@ members = [
     "crates/lumen-encode-nvenc",
     "crates/lumen-encode-vulkan",
     "crates/lumen-decode-vaapi",
+    "crates/lumen-decode-openh264",
     "crates/lumen-decode-vulkan",
+    "crates/lumen-clipboard-x11",
     "crates/lumen-render",
     "crates/lumen-input-wayland",
     "crates/lumen-input-x11",
@@ -52,6 +54,8 @@ lumen-encode-vaapi = { path = "crates/lumen-encode-vaapi" }
 lumen-encode-nvenc = { path = "crates/lumen-encode-nvenc" }
 lumen-encode-vulkan = { path = "crates/lumen-encode-vulkan" }
 lumen-decode-vaapi = { path = "crates/lumen-decode-vaapi" }
+lumen-decode-openh264 = { path = "crates/lumen-decode-openh264" }
+lumen-clipboard-x11 = { path = "crates/lumen-clipboard-x11" }
 lumen-decode-vulkan = { path = "crates/lumen-decode-vulkan" }
 lumen-render = { path = "crates/lumen-render" }
 lumen-input-wayland = { path = "crates/lumen-input-wayland" }
@@ -90,7 +94,7 @@ socket2 = { version = "0.6", features = ["all"] }
 libloading = "0.9"
 nix = { version = "0.31", features = ["ioctl", "fs", "poll", "resource"] }
 rustix = { version = "1", features = ["fs", "net", "mm", "time", "process", "shm", "event", "stdio", "termios"] }
-x11rb = { version = "0.14", features = ["shm", "damage", "dri3", "sync", "xfixes", "xinput", "xtest", "present", "randr", "render", "allow-unsafe-code"] }
+x11rb = { version = "0.14", features = ["shm", "damage", "dri3", "sync", "xfixes", "xinput", "xtest", "present", "randr", "render", "dpms", "allow-unsafe-code"] }
 xkbcommon = { version = "0.9", features = ["wayland", "x11"] }
 wayland-client = "0.31"
 wayland-backend = "0.3"
@@ -107,6 +111,8 @@ egl = "0.2"
 drm = "0.15"
 drm-fourcc = "2"
 image = { version = "0.25", default-features = false, features = ["png"] }
+font8x8 = "0.3"
+openh264 = "0.9"
 crc32fast = "1"
 proptest = "1"
 libspa = "0.10"
