@@ -132,6 +132,9 @@ pub struct HostSettings {
     /// for a bigger one is refused: the operator's choice is the limit, and
     /// the client's own ladder is for going down, not up.
     pub quality_ceiling: Mutex<Quality>,
+    /// Whether the operator holds the picture. A held picture does not follow the client's
+    /// ladder: requests for another size are ignored and the client is told the held size.
+    pub quality_held: AtomicBool,
 }
 
 impl Default for HostSettings {
@@ -147,6 +150,7 @@ impl Default for HostSettings {
             rate_control_mode: AtomicU8::new(0),
             quality: Mutex::new(Quality::new(1920, 1080, 30)),
             quality_ceiling: Mutex::new(Quality::new(1920, 1080, 30)),
+            quality_held: AtomicBool::new(false),
         }
     }
 }
@@ -279,6 +283,17 @@ impl HostSettings {
             quality.height.min(ceiling.height),
             quality.fps,
         )
+    }
+
+    /// Whether the operator holds the picture: client requests for another size are ignored.
+    #[must_use]
+    pub fn quality_held(&self) -> bool {
+        self.quality_held.load(Ordering::Relaxed)
+    }
+
+    /// Set whether the operator holds the picture.
+    pub fn set_quality_held(&self, held: bool) {
+        self.quality_held.store(held, Ordering::Relaxed);
     }
 }
 

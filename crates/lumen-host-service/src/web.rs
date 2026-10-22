@@ -286,6 +286,7 @@ impl HostView {
                 // one.
                 "width": settings.quality().width,
                 "height": settings.quality().height,
+                "quality_held": settings.quality_held(),
                 "capture_width": self.config.width,
                 "capture_height": self.config.height,
                 "fps": settings.fps(),
@@ -433,16 +434,23 @@ impl Api for HostApi {
                         .min(self.view.config.height),
                     current.fps,
                 );
-                if quality == current {
-                    Ok(json!({ "ok": true, "message": "the picture is already that size" }))
-                } else {
+                // Holding keeps the picture whatever the client's ladder asks for; releasing
+                // lets the ladder move it again.
+                let hold = args.get("hold").and_then(Value::as_bool).unwrap_or(false);
+                self.view.settings.set_quality_held(hold);
+                if quality != current {
                     self.view.settings.set_quality(quality);
                     self.view.actions.set_quality(quality);
-                    Ok(json!({
-                        "ok": true,
-                        "message": format!("the picture is now {}x{}", quality.width, quality.height),
-                    }))
                 }
+                Ok(json!({
+                    "ok": true,
+                    "message": format!(
+                        "the picture is {}x{}{}",
+                        quality.width,
+                        quality.height,
+                        if hold { ", held" } else { "" }
+                    ),
+                }))
             }
             "request_idr" => {
                 settings.request_keyframe();

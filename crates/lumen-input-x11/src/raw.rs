@@ -558,7 +558,7 @@ fn event_mask() -> xinput::XIEventMask {
 }
 
 /// The evdev code of an X11 button number.
-fn evdev_button(x11_button: u8) -> Option<u32> {
+pub(crate) fn evdev_button(x11_button: u8) -> Option<u32> {
     match x11_button {
         1 => Some(BTN_LEFT),
         2 => Some(BTN_MIDDLE),
@@ -568,7 +568,7 @@ fn evdev_button(x11_button: u8) -> Option<u32> {
 }
 
 /// The scroll movement of an X11 wheel button.
-fn wheel_scroll(x11_button: u8) -> Option<(f64, f64)> {
+pub(crate) fn wheel_scroll(x11_button: u8) -> Option<(f64, f64)> {
     match x11_button {
         4 => Some((0.0, -PIXELS_PER_NOTCH)),
         5 => Some((0.0, PIXELS_PER_NOTCH)),

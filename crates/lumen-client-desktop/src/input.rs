@@ -1,37 +1,42 @@
-//! The client's input path: X11 events leave as sealed datagrams for the host's input socket.
+//! The client's input path: the keys and pointer of the viewer window leave as sealed datagrams
+//! for the host's input socket.
 //!
-//! It runs only when there is an X display to read. Under Xwayland, XI2 reports events only while
-//! an X window has focus, so input aimed at native Wayland windows is not captured here.
+//! Only the viewer's own X11 window is read: keys while it has the focus, the pointer while it is
+//! over it. Positions are window pixels, which are the pixels of the picture the host serves, so
+//! the host scales them to its screen.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread;
 use std::time::Duration;
 
 use lumen_crypto::PacketCipher;
-use lumen_input_x11::{RawConfig, RawEventSource};
+use lumen_input_x11::WindowEventSource;
 use lumen_transport::input_channel::InputSender;
 
 use crate::receive::monotonic_us;
 
-/// How long one poll waits for an event before the thread looks at the running flag again.
+/// How long one poll waits for an event before the thread looks at the running flag and the
+/// window again.
 const POLL: Duration = Duration::from_millis(20);
 
-/// Starts the input thread: X events in, sealed input datagrams to `peer` out. Returns `None`,
-/// after saying why on the standard error, when the X display or the socket is not available.
+/// Starts the input thread: events of the viewer window in, sealed input datagrams to `peer` out.
+/// `window` is the X11 window id the renderer publishes; `None` (Wayland presenter) means no
+/// input. Returns `None`, after saying why on the standard error, when input cannot run.
 #[must_use]
 pub fn spawn(
     local: SocketAddr,
     peer: SocketAddr,
     cipher: PacketCipher,
     running: Arc<AtomicBool>,
+    window: Option<Arc<AtomicU32>>,
 ) -> Option<thread::JoinHandle<()>> {
-    if std::env::var_os("DISPLAY").is_none() {
-        eprintln!("lumen-client: input capture unavailable: no X display");
+    let Some(window) = window else {
+        eprintln!("lumen-client: input capture needs the X11 presenter (--x11)");
         return None;
-    }
-    let mut source = match RawEventSource::open(&RawConfig::default()) {
+    };
+    let mut source = match WindowEventSource::open(None) {
         Ok(source) => source,
         Err(e) => {
             eprintln!("lumen-client: input capture unavailable: {e}");
@@ -47,6 +52,11 @@ pub fn spawn(
     };
     Some(thread::spawn(move || {
         while running.load(Ordering::SeqCst) {
+            // The renderer recreates its window when the picture changes size.
+            if let Err(e) = source.set_window(window.load(Ordering::Acquire)) {
+                eprintln!("lumen-client: input capture stopped: {e}");
+                break;
+            }
             match source.poll_action(POLL) {
                 Ok(Some(action)) => {
                     // The stamp is read as late as possible, so it marks the moment the event went out.

@@ -6,6 +6,7 @@
 //! host to the web crate, so the web crate stays free of the pipeline, the
 //! encoder and the session table.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
@@ -110,11 +111,12 @@ fn query_number(query: &str, key: &str) -> Option<u64> {
 /// And a request that names an origin the server does not serve is refused
 /// outright, which is the browser's own cross-origin rule.
 #[must_use]
-pub fn authorises(request: &Request, token: &str, address: &str) -> bool {
+pub fn authorises(request: &Request, token: &str, address: SocketAddr) -> bool {
     if let Some(origin) = request.header("origin") {
+        let port = address.port();
         let allowed = origin == format!("http://{address}")
-            || origin == format!("http://localhost:{address}")
-            || origin == format!("http://127.0.0.1:{address}");
+            || origin == format!("http://localhost:{port}")
+            || origin == format!("http://127.0.0.1:{port}");
         if !allowed {
             return false;
         }
@@ -132,7 +134,7 @@ pub fn handle(
     stream: &mut std::net::TcpStream,
     api: &Arc<dyn Api>,
     token: &str,
-    address: &str,
+    address: SocketAddr,
     dashboard: &str,
 ) -> std::io::Result<bool> {
     match route(request) {
@@ -192,7 +194,7 @@ pub fn handle(
                     "Forbidden",
                     &ApiError::new(
                         "forbidden",
-                        "the request does not carry the host's token, or it comes from another origin",
+                        "the token is missing or from an earlier host run, or the page is not served by this host: open the URL the host printed",
                     )
                     .to_json(),
                 );
@@ -277,7 +279,7 @@ mod tests {
 
     #[test]
     fn a_command_needs_the_token() {
-        let address = "127.0.0.1:8080";
+        let address: SocketAddr = "127.0.0.1:8080".parse().expect("an address");
         let bare = request("POST", "/api/command", &[]);
         assert!(!authorises(&bare, "secret", address));
         let with_token = request("POST", "/api/command", &[("x-lumen-token", "secret")]);
@@ -286,7 +288,7 @@ mod tests {
 
     #[test]
     fn a_command_from_another_origin_is_refused() {
-        let address = "127.0.0.1:8080";
+        let address: SocketAddr = "127.0.0.1:8080".parse().expect("an address");
         let refused = request(
             "POST",
             "/api/command",
@@ -305,5 +307,19 @@ mod tests {
             ],
         );
         assert!(authorises(&allowed, "secret", address));
+    }
+
+    #[test]
+    fn a_command_from_localhost_on_the_host_port_is_allowed() {
+        let address: SocketAddr = "127.0.0.1:8080".parse().expect("an address");
+        let localhost = request(
+            "POST",
+            "/api/command",
+            &[
+                ("x-lumen-token", "secret"),
+                ("origin", "http://localhost:8080"),
+            ],
+        );
+        assert!(authorises(&localhost, "secret", address));
     }
 }

@@ -27,6 +27,9 @@ use x11rb::errors::{ConnectError, ConnectionError, ReplyError, ReplyOrIdError};
 use x11rb::protocol::{Event, damage, xfixes, xproto};
 use x11rb::rust_connection::RustConnection;
 
+/// The longest an unchanged screen goes without a frame.
+const IDLE_REFRESH: Duration = Duration::from_secs(1);
+
 /// A rectangle in root-window pixel coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rect {
@@ -39,8 +42,8 @@ pub struct Rect {
 /// One rung of the capture ladder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Backend {
-    /// Opt-in only. The root region is copied into a DMA-BUF that is not fenced:
-    /// a CPU read right after the frame arrives can see pre-copy pixels. See `dri3.rs`.
+    /// The root region is copied on the GPU into a DMA-BUF. The copy is fenced: when a frame
+    /// is handed out the copy has been submitted, so readers wait for it. See `dri3.rs`.
     Dri3,
     /// MIT-SHM `GetImage` into a shared memfd.
     Shm,
@@ -57,8 +60,8 @@ pub struct CaptureConfig {
     pub region: Option<Rect>,
     /// Maximum frame rate; frames are never emitted faster.
     pub fps: u32,
-    /// Use exactly this rung and fail if it is unavailable. `None` walks MIT-SHM then GetImage.
-    /// DRI3 is never chosen implicitly, see [`Backend::Dri3`].
+    /// Use exactly this rung and fail if it is unavailable. `None` walks DRI3, MIT-SHM, then
+    /// GetImage.
     pub backend: Option<Backend>,
 }
 
@@ -219,6 +222,21 @@ impl X11Capture {
         self.error.take()
     }
 
+    /// Change the maximum frame rate (zero is treated as one).
+    pub fn set_fps(&mut self, fps: u32) {
+        self.interval = Duration::from_secs(1) / fps.max(1);
+    }
+
+    /// The render node the frames are allocated on, when the capture hands out DMA-BUFs. A
+    /// consumer that imports the frames must open this node.
+    #[must_use]
+    pub fn render_node(&self) -> Option<&std::path::Path> {
+        match self.backend {
+            Backend::Dri3 => self.dri3.as_ref().and_then(dri3::Device::node),
+            Backend::Shm | Backend::GetImage => None,
+        }
+    }
+
     /// The cursor image and position, via XFixes.
     ///
     /// # Errors
@@ -251,7 +269,15 @@ impl X11Capture {
             self.dirty = true;
         }
         let now = Instant::now();
-        if !self.dirty || self.last_capture.is_some_and(|t| now < t + self.interval) {
+        // An idle screen still sends a frame now and then: a client that joins or loses a frame
+        // while nothing changes would otherwise wait for a picture that never comes.
+        if self.last_capture.is_some_and(|t| now >= t + IDLE_REFRESH) {
+            self.dirty = true;
+        }
+        // A tenth of the interval absorbs the caller's wake-up jitter, which would otherwise
+        // stretch every period past the rate (the Wayland pacer does the same).
+        let due = self.interval * 9 / 10;
+        if !self.dirty || self.last_capture.is_some_and(|t| now < t + due) {
             return Ok(None);
         }
         let capture_ts_us = monotonic_us();
@@ -315,10 +341,10 @@ impl X11Capture {
         };
     }
 
-    fn grab_dri3(&self) -> Result<FrameBuffer, Error> {
+    fn grab_dri3(&mut self) -> Result<FrameBuffer, Error> {
         let dev = self
             .dri3
-            .as_ref()
+            .as_mut()
             .ok_or(Error::Unsupported("DRI3 device missing"))?;
         Ok(FrameBuffer::Dmabuf(dev.grab(
             &self.conn,
@@ -370,7 +396,8 @@ impl FrameSource for X11Capture {
     }
 }
 
-/// Pick the rung to use. DRI3 is only tried when forced; the default walks MIT-SHM then GetImage.
+/// Pick the rung to use. The default tries DRI3, then MIT-SHM, then GetImage; DRI3 keeps the
+/// MIT-SHM segment as its fallback, so a DRI3 failure later steps down to MIT-SHM.
 fn ladder(
     conn: &RustConnection,
     root: xproto::Window,
@@ -383,16 +410,27 @@ fn ladder(
             .ok_or(Error::Unsupported("DRI3 requested but unavailable"))?;
         return Ok((Backend::Dri3, None, Some(dev)));
     }
-    if matches!(forced, None | Some(Backend::Shm)) {
+    let dri3 = if forced.is_none() {
+        // A server that refuses DRI3 part-way is not an error for the default ladder.
+        dri3::Device::open(conn, root, depth).ok().flatten()
+    } else {
+        None
+    };
+    let shm = if matches!(forced, None | Some(Backend::Shm)) {
         let len = usize::from(size.0) * usize::from(size.1) * 4;
-        if let Some(seg) = shm::Segment::attach(conn, len)? {
-            return Ok((Backend::Shm, Some(seg), None));
-        }
-        if forced == Some(Backend::Shm) {
-            return Err(Error::Unsupported("MIT-SHM requested but unavailable"));
-        }
+        shm::Segment::attach(conn, len)?
+    } else {
+        None
+    };
+    if forced == Some(Backend::Shm) && shm.is_none() {
+        return Err(Error::Unsupported("MIT-SHM requested but unavailable"));
     }
-    Ok((Backend::GetImage, None, None))
+    let backend = match (&dri3, &shm) {
+        (Some(_), _) => Backend::Dri3,
+        (None, Some(_)) => Backend::Shm,
+        (None, None) => Backend::GetImage,
+    };
+    Ok((backend, shm, dri3))
 }
 
 fn verify_bgrx(conn: &RustConnection, screen: &xproto::Screen) -> Result<(), Error> {

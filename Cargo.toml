@@ -86,7 +86,7 @@ socket2 = { version = "0.6", features = ["all"] }
 libloading = "0.9"
 nix = { version = "0.31", features = ["ioctl", "fs", "poll"] }
 rustix = { version = "1", features = ["fs", "net", "mm", "time", "process", "shm", "event", "stdio", "termios"] }
-x11rb = { version = "0.14", features = ["shm", "damage", "dri3", "xfixes", "xinput", "xtest", "present", "randr", "allow-unsafe-code"] }
+x11rb = { version = "0.14", features = ["shm", "damage", "dri3", "sync", "xfixes", "xinput", "xtest", "present", "randr", "allow-unsafe-code"] }
 xkbcommon = { version = "0.9", features = ["wayland", "x11"] }
 wayland-client = "0.31"
 wayland-backend = "0.3"

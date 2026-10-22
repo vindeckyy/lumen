@@ -65,10 +65,34 @@ impl VideoProcessor {
         dst_width: u32,
         dst_height: u32,
     ) -> VaResult<OwnedVaSurface> {
-        same_display(&self.display.inner, &src.display)?;
-        // shortcut: one output surface allocated per frame; upgrade to a pool with busy tracking if
-        // vaCreateSurfaces shows up in profiles.
         let dst = OwnedVaSurface::create(&self.display, dst_format, dst_width, dst_height)?;
+        self.convert_into(src, dst)
+    }
+
+    /// [`Self::convert`] into a linear (untiled) surface, for a consumer that imports only linear
+    /// DMA-BUFs.
+    ///
+    /// # Errors
+    /// As [`Self::convert`], and [`VaError::Status`] if the driver cannot make a linear surface.
+    pub fn convert_linear(
+        &mut self,
+        src: &OwnedVaSurface,
+        dst_format: PixelFormat,
+        dst_width: u32,
+        dst_height: u32,
+    ) -> VaResult<OwnedVaSurface> {
+        let dst = OwnedVaSurface::create_linear(&self.display, dst_format, dst_width, dst_height)?;
+        self.convert_into(src, dst)
+    }
+
+    // shortcut: one output surface allocated per frame; upgrade to a pool with busy tracking if
+    // vaCreateSurfaces shows up in profiles.
+    fn convert_into(
+        &mut self,
+        src: &OwnedVaSurface,
+        dst: OwnedVaSurface,
+    ) -> VaResult<OwnedVaSurface> {
+        same_display(&self.display.inner, &src.display)?;
         let parameters = pipeline_parameters(src);
         let pipeline = self
             .context

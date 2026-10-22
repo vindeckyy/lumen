@@ -258,6 +258,13 @@ impl WlrCapture {
         self.copy_with_damage
     }
 
+    /// Change the stream rate. Frames arriving faster are dropped.
+    // shortcut: the damage-copy choice made at open is kept, so a higher rate on a slow
+    // output still waits for damage; reopen the capture if that matters.
+    pub fn set_fps(&mut self, fps: u32) {
+        self.pacer.set_fps(fps);
+    }
+
     /// The most recent error from [`FrameSource::poll_frame`], if any. Clears it.
     pub fn take_error(&mut self) -> Option<Error> {
         self.error.take()

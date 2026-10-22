@@ -8,6 +8,8 @@
 
 use std::fs::File;
 use std::os::fd::OwnedFd;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use lumen_protocol::media::{
     DRM_FORMAT_MOD_INVALID, DRM_FORMAT_MOD_LINEAR, DmabufImage, FrameBuffer, FrameSink,
@@ -52,6 +54,8 @@ pub struct X11Renderer {
     serial: u32,
     present_count: u64,
     last_present_ts_us: Option<u64>,
+    /// The id of the current window, shared with readers on other threads (0 before the first).
+    window_id: Arc<AtomicU32>,
 }
 
 #[derive(Clone, Copy)]
@@ -155,6 +159,7 @@ impl X11Renderer {
             serial: 0,
             present_count: 0,
             last_present_ts_us: None,
+            window_id: Arc::new(AtomicU32::new(0)),
         })
     }
 
@@ -165,10 +170,28 @@ impl X11Renderer {
         self.last_present_ts_us
     }
 
+    /// The id of the window frames are presented in, or 0 before the first frame. The window is
+    /// recreated when the frame size changes, so a reader loads it again when it needs it.
+    #[must_use]
+    pub fn window_id(&self) -> Arc<AtomicU32> {
+        Arc::clone(&self.window_id)
+    }
+
     /// Number of frames presented so far.
     #[must_use]
     pub fn present_count(&self) -> u64 {
         self.present_count
+    }
+
+    /// `(DRM fourcc, modifier)` pairs this renderer imports: linear BGRX through DRI3 and
+    /// Present, the only layout legacy `PixmapFromBuffer` describes. None without both.
+    #[must_use]
+    pub fn dmabuf_formats(&self) -> Vec<(u32, u64)> {
+        if self.has_dri3 && self.has_present {
+            vec![(PixelFormat::Bgrx.drm_fourcc(), DRM_FORMAT_MOD_LINEAR)]
+        } else {
+            Vec::new()
+        }
     }
 
     /// Whether the current window was accepted for composite unredirection (full-screen only).
@@ -424,6 +447,8 @@ impl X11Renderer {
             self.destroy_window(old)?;
         }
         self.window = Some(self.create_window(width, height, format)?);
+        self.window_id
+            .store(self.window.as_ref().map_or(0, |w| w.id), Ordering::Release);
         Ok(())
     }
 

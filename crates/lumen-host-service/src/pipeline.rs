@@ -709,8 +709,18 @@ impl HostPipeline {
         // The input socket shares the media address of the host, so the client reaches it on the
         // path it already uses for media.
         let input_addr = SocketAddr::new(config.media_addr.ip(), crate::input::INPUT_PORT);
-        let input_handle =
-            crate::input::InputStage::start(input_addr, input_cipher, config.width, config.height);
+        // A host that shares an X11 display injects into it; otherwise the kernel gets the input.
+        let target = match config.capture {
+            DisplayServer::X11 => crate::input::InjectTarget::X11(config.display.clone()),
+            DisplayServer::Wayland => crate::input::InjectTarget::Uinput,
+        };
+        let input_handle = crate::input::InputStage::start(
+            input_addr,
+            input_cipher,
+            &target,
+            (config.width, config.height),
+            Arc::clone(&self.settings),
+        );
 
         let send_handle = {
             let stage = SendStage {
@@ -948,11 +958,19 @@ impl CaptureSource {
         }
     }
 
+    /// Change the capture rate.
+    fn set_fps(&mut self, fps: u32) {
+        match self {
+            Self::Wayland(capture) => capture.set_fps(fps),
+            Self::X11(capture) => capture.set_fps(fps),
+        }
+    }
+
     /// The render node the DMA-BUF frames are allocated on, or `None` when there is none.
     fn render_node(&self) -> Option<PathBuf> {
         match self {
             Self::Wayland(capture) => capture.render_node().map(Path::to_path_buf),
-            Self::X11(_) => None,
+            Self::X11(capture) => capture.render_node().map(Path::to_path_buf),
         }
     }
 }
@@ -1060,6 +1078,8 @@ impl CaptureStage {
         let mut failures = 0u32;
 
         while self.running.load(Ordering::SeqCst) {
+            // The control plane changes the rate at run time, so the capture follows it.
+            capture.set_fps(self.settings.fps());
             if let Some(frame) = capture.poll_frame() {
                 failures = 0;
                 let size = Resolution::new(frame.width, frame.height).ok();
@@ -1155,7 +1175,7 @@ impl CaptureStage {
             DisplayServer::Wayland => crate::monitors::MonitorSource::Wayland,
             DisplayServer::X11 => crate::monitors::MonitorSource::X11,
         };
-        match crate::monitors::list(source) {
+        match crate::monitors::list(source, self.config.display.as_deref()) {
             Ok(monitors) => {
                 for monitor in &monitors {
                     crate::host_log!(info "lumen-host: the output {}", monitor.describe());
@@ -1211,15 +1231,33 @@ fn convert_frame(
     match &frame.buffer {
         FrameBuffer::Cpu { data } => {
             let bgrx = cpu_bgrx(data, frame.format)?;
-            color::bgrx_to_nv12_scaled(&bgrx, width, height, target_w, target_h, &mut nv12)?;
+            to_nv12_cpu(&bgrx, (width, height), (target_w, target_h), &mut nv12)?;
         }
         FrameBuffer::Dmabuf(image) => {
             let pixels = read_pixels(image, width, height).map_err(|e| e.to_string())?;
             let bgrx = cpu_bgrx(&pixels, frame.format)?;
-            color::bgrx_to_nv12_scaled(&bgrx, width, height, target_w, target_h, &mut nv12)?;
+            to_nv12_cpu(&bgrx, (width, height), (target_w, target_h), &mut nv12)?;
         }
     }
     Ok((FrameBuffer::Cpu { data: nv12 }, target_w, target_h, false))
+}
+
+/// Threads the unscaled CPU conversion is split over. One core takes about 7 ms for a 1080p
+/// frame, which caps the capture thread near 70 fps; four bring it well under a 120 fps interval.
+const CONVERT_THREADS: usize = 4;
+
+/// Convert BGRX to NV12 on the CPU, on several threads when the picture is not scaled.
+fn to_nv12_cpu(
+    bgrx: &[u8],
+    (width, height): (u32, u32),
+    (target_w, target_h): (u32, u32),
+    nv12: &mut [u8],
+) -> Result<(), String> {
+    if (width, height) == (target_w, target_h) {
+        color::bgrx_to_nv12_threads(bgrx, width, height, nv12, CONVERT_THREADS)
+    } else {
+        color::bgrx_to_nv12_scaled(bgrx, width, height, target_w, target_h, nv12)
+    }
 }
 
 /// Normalise a captured buffer into BGRX order.
@@ -1674,6 +1712,16 @@ impl ControlStage {
                     // A request without a frame rate keeps the one the host
                     // is running at.
                     let current = self.settings.quality();
+                    if self.settings.quality_held() {
+                        // The operator holds the picture. The client is told the size it
+                        // gets, so its ladder starts from the held picture again.
+                        if (width, height) != (current.width, current.height)
+                            && let Ok(mut changes) = self.resolution_changes.lock()
+                        {
+                            changes.push((current.width, current.height));
+                        }
+                        continue;
+                    }
                     let fps = if fps > 0 { fps } else { current.fps };
                     // The host never serves a picture bigger than the one it
                     // captures: the extra pixels would have to be invented,

@@ -80,6 +80,8 @@ pub struct ClientConfig {
     pub events: Option<std::path::PathBuf>,
     /// The low-power profile of the client.
     pub low_power: bool,
+    /// Whether the client sends the keyboard and pointer of its window to the host.
+    pub input: bool,
     /// Address the audio socket binds to. The host sends audio to this port.
     pub audio_addr: SocketAddr,
     /// Whether the session carries audio.
@@ -102,6 +104,7 @@ impl Default for ClientConfig {
             reconnect: false,
             events: None,
             low_power: false,
+            input: true,
             audio_addr: SocketAddr::from(([0, 0, 0, 0], 24802)),
             audio: false,
             audio_config: lumen_audio::AudioConfig {
@@ -348,6 +351,9 @@ impl ClientPipeline {
 
         let backend = config.backend.unwrap_or_else(default_backend);
         let renderer = Renderer::new(backend, &config.title).map_err(ClientError::Render)?;
+        // Input is read from the window the renderer presents in, so its id is taken before the
+        // renderer moves into the present stage.
+        let input_window = renderer.x11_window();
 
         let running = Arc::new(AtomicBool::new(true));
         // The link accounting the host's estimator needs.
@@ -414,7 +420,7 @@ impl ClientPipeline {
 
         // Input leaves on its own socket, sealed with the client-to-host media key. The host
         // listens on the fixed input port of its address.
-        let input_handle = {
+        let input_handle = if config.input {
             let local = SocketAddr::new(config.media_addr.ip(), 0);
             let peer = SocketAddr::new(config.host.ip(), lumen_host_service::input::INPUT_PORT);
             let cipher = PacketCipher::new(
@@ -422,7 +428,9 @@ impl ClientPipeline {
                 established.keys.media_c2h,
                 established.keys.session_id,
             );
-            input::spawn(local, peer, cipher, Arc::clone(&running))
+            input::spawn(local, peer, cipher, Arc::clone(&running), input_window)
+        } else {
+            None
         };
 
         let control_handle = {

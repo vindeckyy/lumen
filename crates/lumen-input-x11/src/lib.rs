@@ -29,11 +29,13 @@
 
 pub mod keyboard;
 pub mod raw;
+pub mod window;
 
 pub use keyboard::{Keymap, KeymapError, evdev_code_from_x11, x11_keycode_from_evdev};
 pub use raw::{
     AxisLayout, PointerMotion, PointerTracker, RawConfig, RawError, RawEvent, RawEventSource,
 };
+pub use window::WindowEventSource;
 
 #[cfg(test)]
 mod tests {

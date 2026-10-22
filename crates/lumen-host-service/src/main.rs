@@ -311,14 +311,17 @@ fn main() -> ExitCode {
     };
 
     if args.list_outputs {
-        return match lumen_host_service::monitors::list(match args.config.capture {
-            lumen_host_service::backend::DisplayServer::X11 => {
-                lumen_host_service::monitors::MonitorSource::X11
-            }
-            lumen_host_service::backend::DisplayServer::Wayland => {
-                lumen_host_service::monitors::MonitorSource::Wayland
-            }
-        }) {
+        return match lumen_host_service::monitors::list(
+            match args.config.capture {
+                lumen_host_service::backend::DisplayServer::X11 => {
+                    lumen_host_service::monitors::MonitorSource::X11
+                }
+                lumen_host_service::backend::DisplayServer::Wayland => {
+                    lumen_host_service::monitors::MonitorSource::Wayland
+                }
+            },
+            args.config.display.as_deref(),
+        ) {
             Ok(outputs) => {
                 for o in outputs {
                     // The size is the second field, so a script can read it

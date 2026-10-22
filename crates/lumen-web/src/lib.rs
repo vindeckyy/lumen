@@ -91,7 +91,7 @@ impl WebServer {
     /// # Errors
     /// Returns the error the operating system reported.
     pub fn run(self) -> std::io::Result<()> {
-        let address = self.listener.address.to_string();
+        let address = self.listener.address;
         let api = Arc::clone(&self.api);
         let token = self.token.clone();
         let dashboard = ui::DASHBOARD.to_string();
@@ -106,10 +106,9 @@ impl WebServer {
             let api = Arc::clone(&api);
             let token = token.clone();
             let dashboard = dashboard.clone();
-            let address = address.clone();
             std::thread::spawn(move || {
                 if let Err(e) = http::serve_connection(stream, |request, out| {
-                    api::handle(&request, out, &api, &token, &address, &dashboard)
+                    api::handle(&request, out, &api, &token, address, &dashboard)
                 }) {
                     eprintln!("lumen-web: the connection failed: {e}");
                 }

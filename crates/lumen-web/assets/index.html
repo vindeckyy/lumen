@@ -437,10 +437,13 @@
         <label for="quality">Picture the host serves</label>
         <select id="quality"></select>
       </div>
+      <label class="check" style="display:flex;gap:8px;align-items:center;margin-top:10px">
+        <input type="checkbox" id="quality-hold"> Hold this resolution (ignore the client's requests)
+      </label>
       <div class="btnrow">
         <button class="btn" id="b-quality">Set the picture</button>
       </div>
-      <p class="note">The host follows the compositor's mode, so a mode change on the desktop is picked up without a restart. A client that cannot keep up asks for a smaller picture on its own, and this is where the operator puts it back.</p>
+      <p class="note">Now: <b id="quality-state">—</b>. The host follows the compositor's mode, so a mode change on the desktop is picked up without a restart. A client that cannot keep up asks for a smaller picture on its own unless the resolution is held.</p>
     </section>
 
     <section class="card s4">
@@ -663,6 +666,7 @@
     setText("v-fps", int(fps) + " fps");
     setText("s-fps", counters.frames_encoded + " frames encoded");
 
+    const streamed = counters.streamed_s || 0;
     const kbps = streamed ? (counters.bytes_sent * 8) / streamed / 1000 : null;
     setText("v-bitrate", num(kbps, 0) + " kbps");
     setText("s-bitrate", (stream.width || "?") + "×" + (stream.height || "?") + " @ " + (stream.fps || "?") + " fps");
@@ -746,7 +750,11 @@
       }
     }
     const wanted = (stream.width || 0) + "x" + (stream.height || 0);
-    if ([...quality.options].some((o) => o.value === wanted)) quality.value = wanted;
+    // The operator's pick is not overwritten while they are choosing.
+    if (document.activeElement !== quality && [...quality.options].some((o) => o.value === wanted)) quality.value = wanted;
+    const hold = $("quality-hold");
+    if (document.activeElement !== hold) hold.checked = !!stream.quality_held;
+    setText("quality-state", stream.quality_held ? "held at " + stream.width + " × " + stream.height : "follows the client");
 
     // the outputs
     const outputs = state.outputs || [];
@@ -873,7 +881,12 @@
   $("b-idr").addEventListener("click", () => command("request_idr", {}));
   $("b-quality").addEventListener("click", () => {
     const [width, height] = $("quality").value.split("x").map(Number);
-    command("set_quality", { width: width, height: height });
+    command("set_quality", { width: width, height: height, hold: $("quality-hold").checked });
+  });
+  $("quality-hold").addEventListener("change", (e) => {
+    // Releasing (or holding) applies at once, at the size the host serves now.
+    const [width, height] = $("quality").value.split("x").map(Number);
+    command("set_quality", { width: width, height: height, hold: e.target.checked });
   });
   $("b-apply").addEventListener("click", applyEncoder);
   $("audio").addEventListener("change", (e) => command("set_audio", { enabled: e.target.checked }));

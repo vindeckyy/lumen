@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use lumen_protocol::media::{DmabufImage, PixelFormat};
+use lumen_protocol::media::{DRM_FORMAT_MOD_LINEAR, DmabufImage, PixelFormat};
 
 use crate::{
     display::{DisplayInner, VaDisplay},
@@ -114,14 +114,61 @@ impl OwnedVaSurface {
         height: u32,
         count: usize,
     ) -> VaResult<Vec<Self>> {
+        Self::create_with(display, format, width, height, count, false)
+    }
+
+    /// Allocates one surface of `format` in the linear (untiled) layout, for a consumer that
+    /// imports only linear DMA-BUFs, such as legacy DRI3 `PixmapFromBuffer`.
+    ///
+    /// # Errors
+    /// [`VaError::Status`] if libva cannot allocate it or does not support the modifier list.
+    pub fn create_linear(
+        display: &VaDisplay,
+        format: PixelFormat,
+        width: u32,
+        height: u32,
+    ) -> VaResult<Self> {
+        let mut surfaces = Self::create_with(display, format, width, height, 1, true)?;
+        Ok(surfaces
+            .pop()
+            .expect("create_with(1) returns exactly one surface"))
+    }
+
+    fn create_with(
+        display: &VaDisplay,
+        format: PixelFormat,
+        width: u32,
+        height: u32,
+        count: usize,
+        linear: bool,
+    ) -> VaResult<Vec<Self>> {
         let lib = display.inner.lib();
         let (rt, code) = (format::rt_format(format), format::fourcc(format));
         let n = fit(count)?;
         let mut ids = vec![sys::VA_INVALID_SURFACE; count];
-        let mut attribs = [pixel_format_attrib(code)];
+        let mut linear_modifier = [DRM_FORMAT_MOD_LINEAR];
+        let mut modifier_list = sys::VADRMFormatModifierList {
+            num_modifiers: 1,
+            modifiers: linear_modifier.as_mut_ptr(),
+        };
+        let mut attribs = [
+            pixel_format_attrib(code),
+            sys::VASurfaceAttrib {
+                type_: sys::VASurfaceAttribDRMFormatModifiers,
+                flags: sys::VA_SURFACE_ATTRIB_SETTABLE,
+                value: sys::VAGenericValue {
+                    type_: sys::VAGenericValueTypePointer,
+                    value: sys::_VAGenericValue__bindgen_ty_1 {
+                        p: (&raw mut modifier_list).cast(),
+                    },
+                },
+            },
+        ];
+        let attrib_count: u32 = if linear { 2 } else { 1 };
         display.inner.call(|core, dpy| {
-            // SAFETY: `ids` has `n` writable entries for libva to fill. `attribs` holds one valid
-            // pixel-format attribute, read during the call.
+            // SAFETY: `ids` has `n` writable entries for libva to fill. `attribs` holds
+            // `attrib_count` valid attributes; the modifier list and the modifier it points to
+            // live on this stack frame for the whole call.
             let status = unsafe {
                 core.vaCreateSurfaces(
                     dpy,
@@ -131,7 +178,7 @@ impl OwnedVaSurface {
                     ids.as_mut_ptr(),
                     n,
                     attribs.as_mut_ptr(),
-                    1,
+                    attrib_count,
                 )
             };
             check(lib, "vaCreateSurfaces", status)

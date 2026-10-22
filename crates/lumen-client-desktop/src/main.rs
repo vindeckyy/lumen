@@ -30,6 +30,8 @@ Options:
   --reconnect          Come back on its own when the session ends
   --low-power          Use the low-power profile: one decode thread, a
                        depth-one queue and a 1920x1080 width guard
+  --no-input           Do not send the keyboard and pointer of the viewer window
+                       to the host
   -h, --help           Print this text
 ";
 
@@ -187,6 +189,7 @@ fn parse(args: &[String]) -> Result<(ClientConfig, Option<std::path::PathBuf>), 
             }
             "--reconnect" => config.reconnect = true,
             "--low-power" => config.low_power = true,
+            "--no-input" => config.input = false,
             "--duration" => {
                 let seconds: f64 = value("--duration")?
                     .parse()

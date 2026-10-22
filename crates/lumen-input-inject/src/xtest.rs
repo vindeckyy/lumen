@@ -46,10 +46,19 @@ pub struct XTestInjector {
 impl XTestInjector {
     /// Connects to `$DISPLAY` and checks that the XTEST extension is present.
     pub fn connect(client_width: u32, client_height: u32) -> Result<Self, String> {
+        Self::connect_to(None, client_width, client_height)
+    }
+
+    /// Connects to `display` (`None` reads `$DISPLAY`) and checks that XTEST is present.
+    pub fn connect_to(
+        display: Option<&str>,
+        client_width: u32,
+        client_height: u32,
+    ) -> Result<Self, String> {
         if client_width == 0 || client_height == 0 {
             return Err("client resolution must be non-zero".to_owned());
         }
-        let (conn, screen_num) = RustConnection::connect(None)
+        let (conn, screen_num) = RustConnection::connect(display)
             .map_err(|e| format!("cannot connect to X display: {e}"))?;
         let screen = conn
             .setup()

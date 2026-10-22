@@ -184,11 +184,15 @@ pub fn refresh_from_mode(dot_clock_khz: u32, h_total: u32, v_total: u32, mode_fl
     u32::try_from(refresh).unwrap_or(u32::MAX)
 }
 
-/// The outputs of a display server.
-pub fn list(source: MonitorSource) -> Result<Vec<MonitorInfo>, MonitorError> {
+/// The outputs of a display server. `x11_display` names the X display (`None` reads
+/// `$DISPLAY`); it is ignored for Wayland.
+pub fn list(
+    source: MonitorSource,
+    x11_display: Option<&str>,
+) -> Result<Vec<MonitorInfo>, MonitorError> {
     match source {
         MonitorSource::Wayland => list_wayland(),
-        MonitorSource::X11 => list_x11(None),
+        MonitorSource::X11 => list_x11(x11_display),
     }
 }
 

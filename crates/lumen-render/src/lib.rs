@@ -79,13 +79,23 @@ impl Renderer {
         }
     }
 
-    /// `(DRM fourcc, modifier)` pairs the compositor advertised for dmabuf import. The X11 path
-    /// advertises none, because its frames are presented as CPU BGRX.
+    /// `(DRM fourcc, modifier)` pairs the presenter imports as DMA-BUFs: what the Wayland
+    /// compositor advertised, or linear BGRX on X11 with DRI3 and Present.
     #[must_use]
     pub fn dmabuf_formats(&self) -> Vec<(u32, u64)> {
         match self {
             Self::Wayland(r) => r.dmabuf_formats(),
-            Self::X11(_) => Vec::new(),
+            Self::X11(r) => r.dmabuf_formats(),
+        }
+    }
+
+    /// The id of the X11 window frames are presented in (0 before the first frame), shared so an
+    /// input reader can follow it. `None` on Wayland.
+    #[must_use]
+    pub fn x11_window(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicU32>> {
+        match self {
+            Self::Wayland(_) => None,
+            Self::X11(r) => Some(r.window_id()),
         }
     }
 }

@@ -73,9 +73,10 @@ impl Converter {
         let source =
             OwnedVaSurface::import_frame(&self.display, image, PixelFormat::Nv12, width, height)
                 .map_err(|e| e.to_string())?;
+        // Linear, because X11's DRI3 import describes no tiling; Wayland takes linear too.
         let converted = self
             .processor
-            .convert(&source, PixelFormat::Bgrx, width, height)
+            .convert_linear(&source, PixelFormat::Bgrx, width, height)
             .map_err(|e| e.to_string())?;
         converted
             .export_dmabuf()

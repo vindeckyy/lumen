@@ -202,35 +202,69 @@ pub fn bgrx_to_nv12_scaled(
 /// # Errors
 /// Returns an error when the size is odd or a buffer has the wrong length.
 pub fn bgrx_to_nv12(src: &[u8], width: u32, height: u32, dst: &mut [u8]) -> Result<(), String> {
+    bgrx_to_nv12_threads(src, width, height, dst, 1)
+}
+
+/// [`bgrx_to_nv12`] split over `threads` threads. The output is the same for any thread count:
+/// each thread converts its own band of row pairs.
+///
+/// # Errors
+/// Returns an error when the size is odd or a buffer has the wrong length.
+pub fn bgrx_to_nv12_threads(
+    src: &[u8],
+    width: u32,
+    height: u32,
+    dst: &mut [u8],
+    threads: usize,
+) -> Result<(), String> {
     let (cols, rows) = check_sizes(width, height, src.len(), dst.len())?;
     let (luma_plane, chroma_plane) = dst.split_at_mut(cols * rows);
-    let pixel = |idx: usize| {
-        let px = &src[idx * 4..idx * 4 + 4];
-        rgb_to_ycbcr(i32::from(px[2]), i32::from(px[1]), i32::from(px[0]))
-    };
-    for row in 0..rows {
-        for col in 0..cols {
-            let (luma, _, _) = pixel(row * cols + col);
-            luma_plane[row * cols + col] = clamp8(luma);
+    let pairs_per_band = (rows / 2).div_ceil(threads.max(1));
+    let bands = src
+        .chunks(pairs_per_band * 2 * cols * 4)
+        .zip(luma_plane.chunks_mut(pairs_per_band * 2 * cols))
+        .zip(chroma_plane.chunks_mut(pairs_per_band * cols));
+    if threads <= 1 {
+        for ((src, luma), chroma) in bands {
+            convert_band(src, cols, luma, chroma);
         }
+    } else {
+        std::thread::scope(|scope| {
+            for ((src, luma), chroma) in bands {
+                scope.spawn(move || convert_band(src, cols, luma, chroma));
+            }
+        });
     }
-    for row in (0..rows).step_by(2) {
+    Ok(())
+}
+
+/// Convert a band of whole row pairs. Every pixel is transformed once: its luma is written and its
+/// chroma goes into the average of its 2x2 block.
+fn convert_band(src: &[u8], cols: usize, luma: &mut [u8], chroma: &mut [u8]) {
+    for (pair, (src, luma)) in src
+        .chunks_exact(2 * cols * 4)
+        .zip(luma.chunks_exact_mut(2 * cols))
+        .enumerate()
+    {
+        let chroma = &mut chroma[pair * cols..(pair + 1) * cols];
         for col in (0..cols).step_by(2) {
             let mut cb_sum = 0;
             let mut cr_sum = 0;
             for dy in 0..2 {
                 for dx in 0..2 {
-                    let (_, cb, cr) = pixel((row + dy) * cols + col + dx);
+                    let idx = dy * cols + col + dx;
+                    let px = &src[idx * 4..idx * 4 + 4];
+                    let (y, cb, cr) =
+                        rgb_to_ycbcr(i32::from(px[2]), i32::from(px[1]), i32::from(px[0]));
+                    luma[idx] = clamp8(y);
                     cb_sum += cb;
                     cr_sum += cr;
                 }
             }
-            let uv = (row / 2) * cols + col;
-            chroma_plane[uv] = clamp8((cb_sum + 2) >> 2);
-            chroma_plane[uv + 1] = clamp8((cr_sum + 2) >> 2);
+            chroma[col] = clamp8((cb_sum + 2) >> 2);
+            chroma[col + 1] = clamp8((cr_sum + 2) >> 2);
         }
     }
-    Ok(())
 }
 
 /// Convert NV12 to tightly packed BGRX with alpha set to 255.
@@ -392,5 +426,21 @@ mod tests {
         let src = bgrx(8, 8, [1, 2, 3, 4]);
         let mut dst = vec![0u8; 4 * 3 * 3 / 2];
         assert!(bgrx_to_nv12_scaled(&src, 8, 8, 4, 3, &mut dst).is_err());
+    }
+
+    #[test]
+    fn every_thread_count_gives_the_same_picture() {
+        // 14 row pairs do not split evenly over 3 or 4 threads, so the last band is short.
+        let (width, height) = (10u32, 28u32);
+        let src: Vec<u8> = (0..width * height * 4)
+            .map(|i| (i * 37 % 251) as u8)
+            .collect();
+        let mut one = vec![0u8; (width * height * 3 / 2) as usize];
+        bgrx_to_nv12_threads(&src, width, height, &mut one, 1).expect("one thread");
+        for threads in [2, 3, 4, 16, 64] {
+            let mut many = vec![0u8; one.len()];
+            bgrx_to_nv12_threads(&src, width, height, &mut many, threads).expect("many threads");
+            assert_eq!(many, one, "{threads} threads");
+        }
     }
 }

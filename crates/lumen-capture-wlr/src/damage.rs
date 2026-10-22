@@ -39,6 +39,14 @@ impl Pacer {
         }
     }
 
+    /// Change the rate to `fps` (zero is treated as one). The last emit is kept, so the
+    /// next frame is still paced from it.
+    pub fn set_fps(&mut self, fps: u32) {
+        let interval = Duration::from_secs(1) / fps.max(1);
+        self.interval = interval;
+        self.slack = interval / 10;
+    }
+
     /// Whether a frame captured at `now` may be emitted. Records the emit.
     pub fn admit(&mut self, now: Instant) -> bool {
         let admitted = self
