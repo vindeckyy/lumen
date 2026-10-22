@@ -108,6 +108,15 @@ impl Renderer {
         }
     }
 
+    /// The size of the client's screen in pixels, when the display server reports one.
+    #[must_use]
+    pub fn display_size(&self) -> Option<(u32, u32)> {
+        match self {
+            Self::Wayland(r) => r.display_size(),
+            Self::X11(r) => r.display_size(),
+        }
+    }
+
     /// `(DRM fourcc, modifier)` pairs the presenter imports as DMA-BUFs: what the Wayland
     /// compositor advertised, or linear BGRX on X11 with DRI3 and Present.
     #[must_use]

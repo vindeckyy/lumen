@@ -103,6 +103,7 @@ pub fn spawn(
                 }
             };
             Some(thread::spawn(move || {
+                let mut keys = Shortcut::default();
                 while running.load(Ordering::SeqCst) {
                     // The renderer recreates its window when the picture changes size.
                     if let Err(e) = source.set_window(window.load(Ordering::Acquire)) {
@@ -122,7 +123,7 @@ pub fn spawn(
                         eprintln!("lumen-client: cannot show the host's cursor: {e}");
                     }
                     match source.poll_action(POLL) {
-                        Ok(Some(action)) => forward(&sender, &control, action),
+                        Ok(Some(action)) => forward(&sender, &control, &mut keys, action),
                         Ok(None) => {}
                         Err(e) => {
                             eprintln!("lumen-client: input capture stopped: {e}");
@@ -143,6 +144,7 @@ pub fn spawn(
                 }
             };
             Some(thread::spawn(move || {
+                let mut keys = Shortcut::default();
                 while running.load(Ordering::SeqCst) && !source.is_closed() {
                     if let Some(ControlMessage::Cursor {
                         hot_x,
@@ -157,7 +159,9 @@ pub fn spawn(
                         eprintln!("lumen-client: cannot show the host's cursor: {e}");
                     }
                     match source.poll_event() {
-                        Some(event) => forward(&sender, &control, to_action(event.kind)),
+                        Some(event) => {
+                            forward(&sender, &control, &mut keys, to_action(event.kind));
+                        }
                         None => thread::sleep(WAYLAND_IDLE),
                     }
                 }
@@ -168,14 +172,24 @@ pub fn spawn(
     }
 }
 
-/// The evdev code of F11, the key that toggles fullscreen.
-const KEY_F11: u32 = 87;
+/// Evdev codes of the keys of the fullscreen shortcut, Ctrl+Shift+F.
+const KEY_LEFTCTRL: u32 = 29;
+const KEY_RIGHTCTRL: u32 = 97;
+const KEY_LEFTSHIFT: u32 = 42;
+const KEY_RIGHTSHIFT: u32 = 54;
+const KEY_F: u32 = 33;
 
 /// Sends a viewer-window action to the host, unless it is a local shortcut.
 ///
-/// F11 toggles the window's fullscreen state and never reaches the host, press or release.
-fn forward(sender: &Mutex<InputSender>, window: &crate::WindowControl, action: InputAction) {
-    if let Some(fullscreen) = shortcut(action) {
+/// Ctrl+Shift+F toggles the window's fullscreen state. The F never reaches the host, press or
+/// release; Ctrl and Shift do, so the host never sees them stuck.
+fn forward(
+    sender: &Mutex<InputSender>,
+    window: &crate::WindowControl,
+    keys: &mut Shortcut,
+    action: InputAction,
+) {
+    if let Some(fullscreen) = keys.take(action) {
         if fullscreen {
             window.fullscreen.fetch_xor(true, Ordering::Relaxed);
         }
@@ -184,11 +198,42 @@ fn forward(sender: &Mutex<InputSender>, window: &crate::WindowControl, action: I
     send(sender, action);
 }
 
-/// `Some(toggle)` when `action` is the fullscreen key: `true` on its press.
-fn shortcut(action: InputAction) -> Option<bool> {
-    match action {
-        InputAction::Key { keycode, pressed } if keycode == KEY_F11 => Some(pressed),
-        _ => None,
+/// The modifiers held on the client, so Ctrl+Shift+F can be told from a plain F.
+#[derive(Debug, Default)]
+struct Shortcut {
+    /// One bit per held key: left Ctrl, right Ctrl, left Shift, right Shift.
+    held: u8,
+    /// The F of a shortcut is down, so its release is swallowed too.
+    f_down: bool,
+}
+
+impl Shortcut {
+    /// `Some(toggle)` when `action` is the F of the shortcut: `true` on its press.
+    fn take(&mut self, action: InputAction) -> Option<bool> {
+        let InputAction::Key { keycode, pressed } = action else {
+            return None;
+        };
+        let bit = match keycode {
+            KEY_LEFTCTRL => 0b0001,
+            KEY_RIGHTCTRL => 0b0010,
+            KEY_LEFTSHIFT => 0b0100,
+            KEY_RIGHTSHIFT => 0b1000,
+            KEY_F if pressed && self.held & 0b0011 != 0 && self.held & 0b1100 != 0 => {
+                self.f_down = true;
+                return Some(true);
+            }
+            KEY_F if !pressed && self.f_down => {
+                self.f_down = false;
+                return Some(false);
+            }
+            _ => return None,
+        };
+        if pressed {
+            self.held |= bit;
+        } else {
+            self.held &= !bit;
+        }
+        None
     }
 }
 
@@ -222,17 +267,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn f11_is_the_only_local_shortcut() {
+    fn ctrl_shift_f_is_the_only_local_shortcut() {
         let key = |keycode, pressed| InputAction::Key { keycode, pressed };
-        assert_eq!(shortcut(key(KEY_F11, true)), Some(true));
+        let mut keys = Shortcut::default();
         assert_eq!(
-            shortcut(key(KEY_F11, false)),
-            Some(false),
-            "the release is swallowed too"
+            keys.take(key(KEY_F, true)),
+            None,
+            "a plain F goes to the host"
         );
-        assert_eq!(shortcut(key(KEY_F11 + 1, true)), None);
+        assert_eq!(keys.take(key(KEY_F, false)), None);
         assert_eq!(
-            shortcut(InputAction::Button {
+            keys.take(key(KEY_LEFTCTRL, true)),
+            None,
+            "modifiers go to the host"
+        );
+        assert_eq!(
+            keys.take(key(KEY_F, true)),
+            None,
+            "Ctrl+F is not the shortcut"
+        );
+        assert_eq!(keys.take(key(KEY_F, false)), None);
+        assert_eq!(keys.take(key(KEY_RIGHTSHIFT, true)), None);
+        assert_eq!(keys.take(key(KEY_F, true)), Some(true));
+        assert_eq!(keys.take(key(KEY_LEFTCTRL, false)), None);
+        assert_eq!(
+            keys.take(key(KEY_F, false)),
+            Some(false),
+            "the release is swallowed even after Ctrl went up"
+        );
+        assert_eq!(
+            keys.take(key(KEY_F, true)),
+            None,
+            "Shift+F is not the shortcut"
+        );
+        assert_eq!(
+            keys.take(InputAction::Button {
                 button: 0x110,
                 pressed: true
             }),

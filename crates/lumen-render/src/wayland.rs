@@ -23,6 +23,7 @@ use wayland_client::backend::WaylandError;
 use wayland_client::globals::{GlobalList, GlobalListContents, registry_queue_init};
 use wayland_client::protocol::wl_buffer::{self, WlBuffer};
 use wayland_client::protocol::wl_compositor::WlCompositor;
+use wayland_client::protocol::wl_output::{self, WlOutput};
 use wayland_client::protocol::wl_registry::{self, WlRegistry};
 use wayland_client::protocol::wl_shm::{self, WlShm};
 use wayland_client::protocol::wl_shm_pool::WlShmPool;
@@ -71,6 +72,38 @@ struct State {
     last_present_ts_us: Option<u64>,
     /// The user asked to close the window.
     close_requested: bool,
+    /// The biggest current mode of the outputs, in pixels.
+    display_size: Option<(u32, u32)>,
+}
+
+impl Dispatch<WlOutput, ()> for State {
+    fn event(
+        state: &mut Self,
+        _: &WlOutput,
+        event: wl_output::Event,
+        &(): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_output::Event::Mode {
+            flags,
+            width,
+            height,
+            ..
+        } = event
+            && flags
+                .into_result()
+                .is_ok_and(|f| f.contains(wl_output::Mode::Current))
+            && let (Ok(w), Ok(h)) = (u32::try_from(width), u32::try_from(height))
+            && state
+                .display_size
+                .is_none_or(|(bw, bh)| u64::from(w) * u64::from(h) > u64::from(bw) * u64::from(bh))
+        {
+            // shortcut: the biggest output stands for the client's screen, not the one the
+            // window is on; track wl_surface.enter when monitors of mixed sizes matter.
+            state.display_size = Some((w, h));
+        }
+    }
 }
 
 impl Dispatch<WlRegistry, GlobalListContents> for State {
@@ -280,6 +313,15 @@ impl WaylandRenderer {
         // Version 3 is the last with `modifier` events that list accepted formats.
         let dmabuf: Option<ZwpLinuxDmabufV1> = globals.bind(&qh, 3..=3, ()).ok();
         let decorations: Option<ZxdgDecorationManagerV1> = globals.bind(&qh, 1..=1, ()).ok();
+        // Every output is bound so the roundtrip below reports their modes.
+        globals.contents().with_list(|list| {
+            for global in list.iter().filter(|g| g.interface == "wl_output") {
+                let _: WlOutput =
+                    globals
+                        .registry()
+                        .bind(global.name, global.version.min(4), &qh, ());
+            }
+        });
         let mut state = State::default();
         queue
             .roundtrip(&mut state)
@@ -331,6 +373,12 @@ impl WaylandRenderer {
     #[must_use]
     pub fn server_decorations(&self) -> bool {
         self.decorations.is_some()
+    }
+
+    /// The size of the client's screen in pixels, once the compositor reported an output.
+    #[must_use]
+    pub fn display_size(&self) -> Option<(u32, u32)> {
+        self.state.display_size
     }
 
     /// Whether the user asked to close the window.

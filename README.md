@@ -210,7 +210,7 @@ edits hosts (with a MAC address for wake-on-lan), pairs through a dialog that
 shows the host's fingerprint and asks for its six-digit code, and starts a
 `lumen-client` for the session. It follows the desktop's light or dark style.
 Failures are explained in plain words, with the client's own output under
-Details. Closing the stream window ends the session; F11 toggles fullscreen.
+Details. Closing the stream window ends the session; Ctrl+Shift+F toggles fullscreen.
 
 ```
 cargo build --release -p lumen-client-gui -p lumen-client-desktop

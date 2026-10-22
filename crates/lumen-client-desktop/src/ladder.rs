@@ -75,6 +75,8 @@ pub struct Ladder {
     /// the host would scale up to reach it, and a picture bigger than the
     /// capture is a picture the host has to invent.
     ceiling: usize,
+    /// The biggest rung that fits the client's own screen. The client never climbs above it.
+    top: usize,
     /// The width of the biggest picture the client failed at, when it
     /// failed, and how long the block lasts.
     ///
@@ -110,6 +112,7 @@ impl Ladder {
             index,
             known: false,
             ceiling: index,
+            top: 0,
             blocked: None,
             dropped: 0,
             shown: 0,
@@ -150,6 +153,14 @@ impl Ladder {
             }
             None => self.index = index,
         }
+    }
+
+    /// Keep the ladder within the client's screen of `width` by `height`.
+    pub fn cap(&mut self, width: u32, height: u32) {
+        self.top = LADDER
+            .iter()
+            .position(|&(w, h)| w <= width && h <= height)
+            .unwrap_or(LADDER.len() - 1);
     }
 
     /// Record a frame that was shown.
@@ -211,6 +222,7 @@ impl Ladder {
             && now.duration_since(self.last_drop) >= CLEAN_FOR
             && self.index > 0
             && self.index > self.ceiling
+            && self.index > self.top
         {
             let (width, _) = LADDER[self.index - 1];
             // The client does not ask for a picture it has already failed

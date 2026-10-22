@@ -1424,6 +1424,50 @@ fn convert_frame(
     Ok((FrameBuffer::Cpu { data: nv12 }, target_w, target_h, false))
 }
 
+/// The biggest picture with the capture's aspect ratio that fits in `width` by `height` and in
+/// the capture. Both sides are even, because the NV12 planes need even sizes.
+fn fit_capture(width: u32, height: u32, (cw, ch): (u32, u32)) -> (u32, u32) {
+    let (cw, ch) = (u64::from(cw.max(2)), u64::from(ch.max(2)));
+    let (w, h) = (u64::from(width).min(cw), u64::from(height).min(ch));
+    let (w, h) = if w * ch <= h * cw {
+        (w, w * ch / cw)
+    } else {
+        (h * cw / ch, h)
+    };
+    // The sides are at most the capture's, which are `u32`.
+    ((w as u32 & !1).max(2), (h as u32 & !1).max(2))
+}
+
+#[test]
+fn a_request_is_fitted_to_the_capture_shape() {
+    let capture = (2560, 1440);
+    assert_eq!(
+        fit_capture(1920, 1080, capture),
+        (1920, 1080),
+        "same shape fits exactly"
+    );
+    assert_eq!(
+        fit_capture(1920, 1200, capture),
+        (1920, 1080),
+        "a taller screen letterboxes"
+    );
+    assert_eq!(
+        fit_capture(2560, 1080, capture),
+        (1920, 1080),
+        "a wider screen pillarboxes"
+    );
+    assert_eq!(
+        fit_capture(3840, 2160, capture),
+        capture,
+        "never bigger than the capture"
+    );
+    assert_eq!(
+        fit_capture(1366, 768, capture),
+        (1364, 768),
+        "odd sides become even"
+    );
+}
+
 /// Threads the unscaled CPU conversion is split over. One core takes about 7 ms for a 1080p
 /// frame, which caps the capture thread near 70 fps; four bring it well under a 120 fps interval.
 const CONVERT_THREADS: usize = 4;
@@ -1946,18 +1990,17 @@ impl ControlStage {
                     let fps = if fps > 0 { fps } else { current.fps };
                     // The host never serves a picture bigger than the one it
                     // captures: the extra pixels would have to be invented,
-                    // and the conversion would cost more for nothing.
-                    let quality =
-                        self.settings
-                            .quality_within_ceiling(crate::settings::Quality::new(
-                                width.min(self.capture_size.0),
-                                height.min(self.capture_size.1),
-                                fps,
-                            ));
+                    // and the conversion would cost more for nothing. The
+                    // picture keeps the capture's aspect ratio, so a client
+                    // screen of another shape gets the biggest undistorted fit.
+                    let (fit_w, fit_h) = fit_capture(width, height, self.capture_size);
+                    let quality = self
+                        .settings
+                        .quality_within_ceiling(crate::settings::Quality::new(fit_w, fit_h, fps));
                     if quality != self.settings.quality() {
                         self.settings.set_quality(quality);
                         if let Ok(mut changes) = self.resolution_changes.lock() {
-                            changes.push((width, height));
+                            changes.push((quality.width, quality.height));
                         }
                         crate::host_log!(
                             info

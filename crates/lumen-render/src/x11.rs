@@ -22,6 +22,7 @@ use x11rb::protocol::Event;
 use x11rb::protocol::composite::{ConnectionExt as _, Redirect};
 use x11rb::protocol::dri3::ConnectionExt as _;
 use x11rb::protocol::present::{ConnectionExt as _, EventMask};
+use x11rb::protocol::randr::ConnectionExt as _;
 use x11rb::protocol::shm::{self as x_shm, ConnectionExt as _};
 use x11rb::protocol::xproto::{
     self, AtomEnum, ClientMessageEvent, ConnectionExt as _, CreateGCAux, CreateWindowAux,
@@ -220,6 +221,27 @@ impl X11Renderer {
     #[must_use]
     pub fn close_requested(&self) -> bool {
         self.close_requested
+    }
+
+    /// The size of the client's screen in pixels: the biggest RandR monitor, or the whole X
+    /// screen when RandR lists none.
+    #[must_use]
+    pub fn display_size(&self) -> Option<(u32, u32)> {
+        // shortcut: the biggest monitor stands for the screen, not the one the window is on.
+        let biggest = self
+            .conn
+            .randr_get_monitors(self.root, true)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .and_then(|reply| {
+                reply
+                    .monitors
+                    .iter()
+                    .map(|m| (u32::from(m.width), u32::from(m.height)))
+                    .max_by_key(|&(w, h)| u64::from(w) * u64::from(h))
+            });
+        let (w, h) = biggest.unwrap_or((self.root_size.0.into(), self.root_size.1.into()));
+        (w > 0 && h > 0).then_some((w, h))
     }
 
     /// Makes the window fullscreen, or windowed again, through the window manager

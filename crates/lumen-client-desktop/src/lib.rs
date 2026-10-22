@@ -430,6 +430,19 @@ impl ClientPipeline {
         let ladder = Arc::new(Mutex::new(crate::ladder::Ladder::new()));
         let (au_tx, au_rx) = std::sync::mpsc::sync_channel::<receive::AccessUnit>(1);
         let (request_tx, request_rx) = std::sync::mpsc::sync_channel::<ControlMessage>(8);
+        // The client asks for its own screen's size, so a bigger host is scaled down to fit
+        // it; the host never scales up and keeps its aspect ratio.
+        if let Some((width, height)) = renderer.display_size() {
+            eprintln!("lumen-client: the screen is {width}x{height}");
+            if let Ok(mut ladder) = ladder.lock() {
+                ladder.cap(width, height);
+            }
+            let _ = request_tx.try_send(ControlMessage::Quality {
+                width,
+                height,
+                fps: 0,
+            });
+        }
 
         let receive_handle = {
             let stage = ReceiveStage {
@@ -746,7 +759,7 @@ fn open_renderer(backend: Option<RenderBackend>, title: &str) -> Result<Renderer
 
 /// The viewer window's state that the threads of a session share.
 ///
-/// The input thread asks for fullscreen (F11) and the present stage, which owns the window,
+/// The input thread asks for fullscreen (Ctrl+Shift+F) and the present stage, which owns the window,
 /// applies it. The present stage records a close, which ends the session for good.
 #[derive(Debug, Default)]
 pub struct WindowControl {

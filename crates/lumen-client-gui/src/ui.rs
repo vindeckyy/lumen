@@ -1152,8 +1152,8 @@ fn show_streaming(shared: &Shared, presenting: bool) {
             .status
             .set_title(&format!("Streaming {}", active.name));
         active.status.set_description(Some(
-            "The host's screen is in its own window. Press F11 there for fullscreen, and close \
-             that window to end the session.",
+            "The host's screen is in its own window. Press Ctrl+Shift+F there for fullscreen, \
+             and close that window to end the session.",
         ));
     } else {
         active
@@ -1399,7 +1399,7 @@ fn preferences(shared: &Shared) {
     let window_group = adw::PreferencesGroup::builder()
         .title("Stream Window")
         .description(
-            "Press F11 in the stream window to switch fullscreen on and off. Automatic uses \
+            "Press Ctrl+Shift+F in the stream window to switch fullscreen on and off. Automatic uses \
              X11 when the desktop draws no title bar for Wayland windows.",
         )
         .build();
@@ -1483,7 +1483,7 @@ fn shortcuts(shared: &Shared) {
         ("Keyboard shortcuts", "<Control>question"),
         ("Close the window", "<Control>w"),
         ("Quit", "<Control>q"),
-        ("Fullscreen (in the stream window)", "F11"),
+        ("Fullscreen (in the stream window)", "<Control><Shift>f"),
     ];
     let group = adw::PreferencesGroup::new();
     for (what, accelerator) in rows {
