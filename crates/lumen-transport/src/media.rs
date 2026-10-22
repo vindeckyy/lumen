@@ -78,8 +78,12 @@ struct SentFrame {
     capture_ts_us: u64,
     au_len: u32,
     slice_count: u16,
-    /// Data slices, each padded to `SLICE_MAX_PAYLOAD`.
-    slices: Vec<Vec<u8>>,
+    /// The padded data slices, one after the other.
+    ///
+    /// They are kept in one buffer rather than in a vector of slices: a frame
+    /// at 1080p is a few thousand slices, and a vector of them would be a few
+    /// thousand small allocations every frame.
+    slices: Vec<u8>,
 }
 
 /// Sends access units as sealed media datagrams.
@@ -148,41 +152,49 @@ impl MediaSender {
         let frame_id = self.next_frame_id;
         self.next_frame_id = self.next_frame_id.wrapping_add(1);
 
-        let slices: Vec<Vec<u8>> = au
-            .chunks(SLICE_MAX_PAYLOAD)
-            .map(|chunk| {
-                let mut slice = vec![0u8; SLICE_MAX_PAYLOAD];
-                slice[..chunk.len()].copy_from_slice(chunk);
-                slice
-            })
-            .collect();
-
         let parity_per_block = self.parity.parity_slices();
         let block_data = self.parity.block_data_slices();
-        let mut datagrams = Vec::with_capacity(slices.len() + parity_per_block * slices.len());
-        for (block, block_slices) in slices.chunks(block_data).enumerate() {
-            let first = block * block_data;
-            for (offset, payload) in block_slices.iter().enumerate() {
-                let header = MediaHeader::data_slice(
-                    MessageKind::VideoData,
-                    frame_id,
-                    (first + offset) as u16,
-                    slice_count,
-                    capture_ts_us,
-                    SLICE_MAX_PAYLOAD as u16,
-                    au_len,
-                    self.session_id,
-                )
-                // The block size travels with the slice, so the receiver can
-                // map a slice index to its block.
-                .with_flags(block_data as u16);
-                datagrams.push(self.seal(header, payload)?);
-            }
-            if parity_per_block > 0 {
-                // A short final block is padded with zero slices so that its
-                // parity matches what the receiver rebuilds.
-                let mut padded = block_slices.to_vec();
-                padded.resize(block_data, vec![0u8; SLICE_MAX_PAYLOAD]);
+        let slice_count_usize = usize::from(slice_count);
+        let mut datagrams = Vec::with_capacity(
+            slice_count_usize + parity_per_block * slice_count_usize.div_ceil(block_data),
+        );
+
+        // The data slices are padded to the slice size, because the parity
+        // is computed over the padded block and the receiver rebuilds it
+        // that way. They live in one buffer, so a frame at 1080p is one
+        // allocation and not a few thousand.
+        let mut slices = vec![0u8; slice_count_usize * SLICE_MAX_PAYLOAD];
+        for (index, chunk) in au.chunks(SLICE_MAX_PAYLOAD).enumerate() {
+            let start = index * SLICE_MAX_PAYLOAD;
+            slices[start..start + chunk.len()].copy_from_slice(chunk);
+        }
+
+        for index in 0..slice_count_usize {
+            let start = index * SLICE_MAX_PAYLOAD;
+            let header = MediaHeader::data_slice(
+                MessageKind::VideoData,
+                frame_id,
+                index as u16,
+                slice_count,
+                capture_ts_us,
+                SLICE_MAX_PAYLOAD as u16,
+                au_len,
+                self.session_id,
+            )
+            // The block size travels with the slice, so the receiver can
+            // map a slice index to its block.
+            .with_flags(block_data as u16);
+            datagrams.push(self.seal(header, &slices[start..start + SLICE_MAX_PAYLOAD])?);
+        }
+
+        // The parity is computed over the padded block, because that is what
+        // the receiver rebuilds.
+        if parity_per_block > 0 {
+            for (block, block_slices) in slices.chunks(block_data * SLICE_MAX_PAYLOAD).enumerate() {
+                let padded: Vec<Vec<u8>> = block_slices
+                    .chunks(SLICE_MAX_PAYLOAD)
+                    .map(<[u8]>::to_vec)
+                    .collect();
                 for (index, bytes) in compute_parity_with(&padded, parity_per_block)
                     .iter()
                     .enumerate()
@@ -242,11 +254,14 @@ impl MediaSender {
             .iter()
             .find(|f| f.frame_id == frame_id)
             .ok_or(MediaError::UnknownSlice(frame_id, slice_index))?;
-        let payload = frame
-            .slices
-            .get(usize::from(slice_index))
-            .ok_or(unknown)?
-            .clone();
+        let start = usize::from(slice_index) * SLICE_MAX_PAYLOAD;
+        let end = start + SLICE_MAX_PAYLOAD;
+        if end > frame.slices.len() {
+            return Err(unknown);
+        }
+        // The slice is copied out so the borrow of the history ends before
+        // the sealing, which needs the sender.
+        let payload = frame.slices[start..end].to_vec();
         let header = MediaHeader::data_slice(
             MessageKind::VideoData,
             frame_id,

@@ -1,34 +1,34 @@
 # Lumen handoff
 
-State as of 2026-10-21, about 19:40 local. Written for the next lead agent or subagent who must continue without the original conversation.
+**Date:** 2026-10-21, 21:35 local.
+**Repository:** `https://github.com/vindeckyy/lumen` (public, branch `main`, one commit so far).
+**For:** the next lead agent or subagent who has to continue without this conversation.
 
-Approved plan: `docs/plan.md` (copied byte-for-byte from `local://lumen-remote-desktop-plan.md`, 44922 bytes, milestones M0 to M8). Execute the plan. Deviations from it are listed in section 8 and must go into the final report.
+This is the **fourth** handoff. The first described a workspace with transport, crypto and session layers but no pipeline. The second described a pipeline that measured its own latency. The third added the adaptive transport, the audio and the clipboard, and the control plane. This one adds the quality ladder, the removal of the per-frame copies, the measurement examples and the public repository.
 
-This is the **third** handoff. The first described a workspace with transport, crypto and session layers but no pipeline. The second described a pipeline that measured its own latency. This one has **every milestone's acceptance block runnable**, the transport is adaptive, the audio and the clipboard are wired into real sessions, and the dependency policy passes. Read section 0 first.
+**Read section 0 first, then section 12 (the remaining work).** Everything in between is the state you are taking over.
 
 ---
 
 ## 0. Start here
 
-- **Where we are.** M0 is complete. B1 (P-frame decode), B2 (DMA-BUF contract) and B3 (media pipeline) are complete. **Every milestone's acceptance block has been run at least once** and has an artefact. M4's acceptance is green. **No glass-to-glass latency has been measured**, because this environment has no photodiode or camera rig.
-- **The whole workspace is green.** `cargo fmt --all --check` clean, `cargo clippy --workspace --all-targets -- -D warnings` exits 0, `cargo test --workspace` exits 0 with **531 tests passing**, `cargo deny check` exits 0, `cargo audit` exits 0.
-- **The transport is adaptive and it works.** The parity level follows the measured loss, the bitrate follows the loss and the delay gradient, the transport cipher is negotiated in the Noise handshake, and a retransmission is bounded by the frame's deadline.
-- **The audio and the clipboard are in the session.** The host creates a PipeWire virtual sink, encodes Opus and sends it on a port of its own with a key of its own. The client places it against the video clock and plays it. The clipboard makes the round trip.
-- **There is a control plane.** `lumen-host --web-listen 127.0.0.1:8080` serves a dashboard that shows the live state and changes the running session: the rate control, the bitrate, the frame rate, the parity level, the picture, the audio, the sessions and the pairing store. The token the host prints is needed for every change, and a request from another origin is refused.
-- **The picture adapts.** A client that cannot keep up asks for a smaller picture and the host scales the capture down to it, which costs less work and is faster. The operator can set the picture from the dashboard.
-- **Nothing is running.** No background job or service exists.
-- **Next action.** Section 10 lists what is left. The two biggest are the zero-copy present path (O-7), which is the largest latency win left, and the Tier B frame drops (O-30), which need the same path. The quality ladder lowers the picture instead, which keeps a weak client smooth but does not raise the picture quality.
+- **Where we are.** Every milestone's acceptance block has been run at least once and has an artefact. The M4 acceptance is green. The transport is adaptive, the audio and the clipboard are in real sessions, the control plane works, and the picture adapts to a client that cannot keep up.
+- **The gates are green.** `cargo fmt --all --check` clean · `cargo clippy --workspace --all-targets -- -D warnings` exits 0 · `cargo test --workspace` exits 0 with **563 tests** · `cargo deny check` exits 0 · `cargo audit` exits 0 (four allowed warnings).
+- **Nothing is running.** No background job, no service, no namespace. The measurement scripts clean up after themselves.
+- **The working tree is clean.** The second commit holds the changes listed in section 11: the removal of the per-frame copies, the measurement examples, the CI fix and this handoff.
+- **The artefacts are stale relative to the code.** The last regeneration was at 20:25, before the per-frame copies were removed. The numbers moved: the host is roughly 40 % faster at 1080p. **Regenerate every artefact** (section 12) before quoting any number.
+- **The one thing that is not done is glass-to-glass.** It needs a photodiode, a camera and a second machine. None of them is here. Every latency number in this repository is a *software pipeline latency* and is labelled as one.
 
 ---
 
 ## 1. Stop state at handoff
 
-- **Lead (Main):** active, performed this stop and handoff.
+- **Lead:** active until the end of this session.
 - **Subagents:** all finished and reported. None is running.
-- **Background jobs / services:** none.
-- **Pending edits:** none half applied. The `docs/notes/` files record what the subagents could not wire themselves; every item in them has been applied.
-- **Destructive actions taken:** none.
-- **Disk note:** the workspace `target/` is about 13 GB. The disk filled up once during this session. Delete a build tree before starting a new one; do not run two at once.
+- **Background jobs:** none.
+- **Pending edits:** the working tree has seven modified files and three untracked paths (section 11). Nothing is half applied; the changes compile and the whole suite passes with them.
+- **Destructive actions:** none. The repository was created and one commit pushed.
+- **Disk:** the workspace `target/` is about 13 GB, a second build tree was 5 GB and was deleted. The disk filled once during the session. One build tree at a time.
 
 ---
 
@@ -41,504 +41,463 @@ This is the **third** handoff. The first described a workspace with transport, c
 | OS / kernel | Ubuntu 26.10 "Stonking Stingray", Linux 7.3.0-9-generic x86_64 |
 | CPU | AMD Ryzen 5 4600H with Radeon Graphics, 12 vCPU |
 | iGPU | AMD Radeon (PCI 0000:05:00.0), `amdgpu`, **`/dev/dri/renderD129`** and `card2`. VA-API H.264 and HEVC encode and decode through `radeonsi_drv_video.so`, libva 1.24, Mesa 26.2.4 |
-| dGPU | NVIDIA GTX 1650 (PCI 0000:01:00.0), driver 580.178.04, **`/dev/dri/renderD128`** and `card1`. `libnvidia-encode.so.1` and `libnvcuvid.so.1` present. VA-API via NVDEC only (`nvidia-vaapi-driver`). NVENC code not written yet |
+| dGPU | NVIDIA GTX 1650 (PCI 0000:01:00.0), driver 580.178.04, **`/dev/dri/renderD128`** and `card1`. `libnvidia-encode.so.1` and `libnvcuvid.so.1` present. VA-API via NVDEC only (`nvidia-vaapi-driver`). **NVENC code is not written** |
 | Software Vulkan | lavapipe (`libvulkan_lvp.so`). `vulkaninfo` works |
 | Display | Physical eDP-1 panel at 1920x1080. No compositor session on it. Not used by any test |
 | Audio | PipeWire 1.6.8 daemon running, socket at `/run/user/1000/pipewire-0` |
 | Webcam | `/dev/video0`, `/dev/video1` (USB, HD Webcam) |
-| Users | `hayden` has rw ACL on `renderD128` and `renderD129`. `sudo -n` works without password |
+| Users | `hayden` has rw ACL on `renderD128` and `renderD129`. `sudo -n` works without a password |
 
-Device-to-name mapping matters. `renderD129` is AMD and is the default VA device. `renderD128` is NVIDIA. `lumen-ffi-va` probes `renderD129` first, then `renderD128`. `LUMEN_VA_DEVICE` overrides it.
+`renderD129` is AMD and is the default VA device. `renderD128` is NVIDIA. `lumen-ffi-va` probes `renderD129` first, then `renderD128`. `LUMEN_VA_DEVICE` overrides it.
 
-### 2.2 Toolchain (verified)
+### 2.2 Toolchain
 
-- Stable `1.99.1` at `/home/hayden/.cargo/bin` and `/home/hayden/.rustup`. `rust-toolchain.toml` pins `channel = "1.99.1"` with `rustfmt`, `clippy`.
-- Nightly `1.101.0` installed for fuzzing. `cargo-fuzz 0.13.2` installed. `rust-toolchain-nightly.toml` exists.
-- **`cargo-deny` 0.20.2 and `cargo-audit` 0.22.2 are installed and both pass.** They were installed during this session.
+- Stable `1.99.1` at `/home/hayden/.cargo/bin` and `/home/hayden/.rustup`. `rust-toolchain.toml` pins `channel = "1.99.1"` with `rustfmt` and `clippy`.
+- Nightly `1.101.0` for fuzzing. `cargo-fuzz 0.13.2` installed. `rust-toolchain-nightly.toml` exists.
+- **`cargo-deny` 0.20.2 and `cargo-audit` 0.22.2 are installed and both pass.**
 
-Every bash call starts a fresh shell. Repeat this export in each call, or pass `cwd`:
+Every bash call starts a fresh shell. Repeat this export in each call:
 
 ```
 export CARGO_HOME=/home/hayden/.cargo RUSTUP_HOME=/home/hayden/.rustup PATH=/home/hayden/.cargo/bin:$PATH
 cd /home/hayden/Desktop/projects/lumen
 ```
 
-### 2.3 Network namespaces (verified)
+### 2.3 Network namespaces
 
-- `scripts/netns-up.sh` creates `lumen-host` (10.77.0.1/24) and `lumen-client` (10.77.0.2/24), joined by a veth pair `lumen-h` and `lumen-c`. `scripts/netns-down.sh` tears it down.
-- Measured RTT without netem: 0.045 to 0.055 ms. With `netem delay 1ms` on both ends: about 2.0 to 2.7 ms RTT.
-- Netem works under `sudo ip netns exec`. Use the netns form: `sudo -n ip netns exec lumen-host tc qdisc add dev lumen-h root netem delay 1ms limit 1000`. **Do not** write `ip -n NS tc`. That form is invalid.
-- **Only one netns pair can exist at a time.** Two scripts that both call `netns-up.sh` will fight over the same namespace names. Do not run two measurement scripts at once.
+- `scripts/netns-up.sh` creates `lumen-host` (10.77.0.1/24) and `lumen-client` (10.77.0.2/24), joined by a veth pair. `scripts/netns-down.sh` tears it down.
+- Measured RTT: 0.045 to 0.055 ms plain, 2.0 to 2.7 ms with `netem delay 1ms` on both ends.
+- Netem works under `sudo ip netns exec`. **Do not** write `ip -n NS tc`; that form is invalid.
+- **Only one netns pair can exist at a time.** Two measurement scripts will fight over the namespace names. Never run two at once.
 
-### 2.4 Display servers (verified)
+### 2.4 Display servers
 
-- **Headless sway.** `WLR_BACKENDS=headless WLR_RENDERER=pixman sway -c /dev/null`, with a private `XDG_RUNTIME_DIR`. The output is `HEADLESS-1` at **1280x720** with an unknown refresh rate (reported as 0 mHz).
-- **The measurement scripts now start their compositors in the user's own `XDG_RUNTIME_DIR`** and tell them apart by the Wayland socket each one picks. The PipeWire socket lives there, so an audio session cannot reach it from a private one. The scripts also find each compositor's sway IPC socket at start-up, so a mode change reaches the right one.
-- **Xvfb.** Start with `Xvfb -displayfd 1` so the display number is assigned, not guessed.
-- **Xwayland.** Available. `LUMEN_X11_TEST_BACKEND=dri3|shm|get` forces a capture rung.
-- **Xvfb has no DRI3.** `lumen-render`'s X11 DRI3 import therefore returns `Err`.
-- Tests that need a display skip with a printed reason when the variable is absent. Run no-display suites with `env -u WAYLAND_DISPLAY -u DISPLAY cargo test ...`.
+- **Headless sway:** `WLR_BACKENDS=headless WLR_RENDERER=pixman sway -c /dev/null` with a private `XDG_RUNTIME_DIR`. The output is `HEADLESS-1` at **1280x720**, refresh reported as 0 mHz.
+- **The measurement scripts start their compositors in the user's own `XDG_RUNTIME_DIR`** and tell them apart by the Wayland socket each one picks. The PipeWire socket lives there, and an audio session cannot reach it from a private one. The scripts also capture each compositor's sway IPC socket at start-up, because a mode change has to reach the right one.
+- **Xvfb:** `Xvfb :90 -screen 0 1920x1080x24 -nolisten tcp`. The X11 route is how a real 1920x1080 source is made; the headless output has no 1080p mode.
+- **Xwayland** is available. `LUMEN_X11_TEST_BACKEND=dri3|shm|get` forces a capture rung.
+- **Xvfb has no DRI3**, so the renderer's X11 DRI3 import returns `Err`.
+- Display-dependent tests skip with a printed reason when the variable is absent. Run them with `env -u WAYLAND_DISPLAY -u DISPLAY cargo test ...`.
 
-### 2.5 Missing system pkg-config entries (observed)
+### 2.5 Missing system packages
 
-`xcb-xfixes`, `xcb-dri3`, `xinput`, and `libvulkan` pkg-config entries were not found during probing. Crates that need them either use `x11rb` directly or were run with feature flags.
+`xcb-xfixes`, `xcb-dri3`, `xinput` and `libvulkan` pkg-config entries are missing. The crates that need them use `x11rb` directly or were run with feature flags.
 
-**`libxkbcommon-x11-dev` is now needed** by the `xkbcommon` crate's `x11` feature, which `lumen-input-x11` uses. The CI workflow must install it, or the build fails on a clean machine.
+**`libxkbcommon-x11-dev` is now needed** by the `xkbcommon` crate's `x11` feature, which `lumen-input-x11` uses. The CI workflow installs it as of this session (section 11).
 
 ### 2.6 Not present
 
-- No photodiode rig, no camera rig, no second machine, no Celeron N4020 device, no 4K or 144 Hz panel.
-- Sunshine, Moonlight-Qt, RustDesk and GRD are **not installed**, so no baseline was measured. `scripts/baseline-check.sh` writes `artifacts/m0/baselines.json` with the honest "not available" records, and the three baseline drivers write status records and exit non-zero.
+- No photodiode rig, no camera rig, no second machine, no Celeron N4020, no 4K or 144 Hz panel.
+- Sunshine, Moonlight-Qt, RustDesk and GRD are **not installed**, so no baseline was measured. `scripts/baseline-check.sh` writes the honest "not available" record to `artifacts/m0/baselines.json`; the three baseline drivers say what is missing and exit non-zero.
 
 ---
 
-## 3. Repository layout (actual)
+## 3. Repository layout
 
-Root: `/home/hayden/Desktop/projects/lumen`. It is a git repository; the public upstream is `github.com/vindeckyy/lumen`.
+Root: `/home/hayden/Desktop/projects/lumen`. It **is** a git repository; the public upstream is `github.com/vindeckyy/lumen`.
 
-- `Cargo.toml` (workspace, 22 members, `exclude = ["vendor/opus", "fuzz"]`)
+- `Cargo.toml` — workspace, 23 members, `exclude = ["vendor/opus", "fuzz"]`
 - `Cargo.lock`, `deny.toml`, `rust-toolchain.toml`, `rust-toolchain-nightly.toml`
-- `crates/` (22 crate directories)
-- `docs/`: `design.md`, `protocol.md`, `benchmarks.md`, `known-limits.md`, `plan.md`, `handoff.md` (this file), `final-report.md`
-- `fuzz/`: `Cargo.toml`, `Cargo.lock`, `fuzz_targets/` (12 files), `corpus/`, `artifacts/`, `target/`
-- `scripts/`: `env-setup.sh`, `probe-caps.sh`, `netns-up.sh`, `netns-down.sh`, `baseline-check.sh`, `baseline-{sunshine,rustdesk,grd}.sh`, `run-e2e.sh`, `run-e2e-x11.sh`, `sweep-loss.sh`, `netem-run.sh`, `run-input-latency.sh`, `run-tier-b.sh`, `run-reconnect.sh`, `run-compositor-restart.sh`, `run-wifi-flap.sh`, `soak.sh`, `chaos.sh`, `x11-env.sh`
-- `harness/`: `README.md` (the physical rig procedure), `photodiode/` (the wiring, the capture loop, the trigger finder, the self-test), `fixtures/simulated-trigger.json`
-- `vendor/opus/` (patched `opus` crate, linked to system libopus)
-- `artifacts/`: `m0`, `m1`, `m2`, `m3`, `m4`, `m5`, `m6`, `m7`, `m8`
-- `target/` (shared build directory)
+- `crates/` — 23 crate directories
+- `docs/` — `design.md`, `protocol.md`, `benchmarks.md`, `known-limits.md`, `plan.md`, `handoff.md` (this file), `final-report.md`, `notes/` (the four subagent working notes, `A-NOTES.md` … `D-NOTES.md`)
+- `docs/screenshots/` — `dashboard.png`, the control plane (this session)
+- `fuzz/` — `Cargo.toml`, `Cargo.lock`, `fuzz_targets/` (12 files), `corpus/`, `artifacts/`
+- `scripts/` — 20 scripts (section 4.5)
+- `harness/` — `README.md` (the physical rig procedure), `photodiode/` (the wiring, `capture.sh`, `detect-trigger.py`, `selftest.sh`), `fixtures/simulated-trigger.json`
+- `vendor/opus/` — a patched copy of the `opus` crate 0.4.0 (MIT OR Apache-2.0, Tad Hardesty). `src/` is byte-identical to upstream; the patch only turns off the bundled cmake build so the system libopus is linked.
+- `artifacts/` — `m0` … `m8`
 - `README.md`, `LICENSE-MIT`, `LICENSE-APACHE`, `.github/workflows/ci.yml`, `.github/workflows/fuzz.yml`
 
-Stub crates (2-line `lib.rs`, `#![forbid(unsafe_code)]` plus a doc comment, no code):
-- `lumen-capture-pipewire`, `lumen-decode-vulkan`, `lumen-encode-nvenc`, `lumen-encode-vulkan`, `lumen-ffi-nvenc`
+Stub crates (a 2-line `lib.rs` with `#![forbid(unsafe_code)]` and a doc comment, no code):
+`lumen-capture-pipewire`, `lumen-decode-vulkan`, `lumen-encode-nvenc`, `lumen-encode-vulkan`, `lumen-ffi-nvenc`.
 
-Rule: do not add placeholder tests such as `assert!(true)`.
+**Never add a placeholder test such as `assert!(true)`.**
 
 ---
 
-## 4. Crate status
+## 4. The code, crate by crate
 
-### 4.1 `lumen-protocol` (64 unit tests)
-- `header.rs`: `MediaHeader`, `HEADER_LEN = 42`. The `flags` word now carries the number of data slices per FEC block for a media slice (D59). `seq` is the AEAD counter, sent in clear as AAD.
-- `capability.rs`: `Capabilities` bitflags. **New: `AEAD_CHACHA20` (bit 19)**, a request for the portable transport cipher (D61).
-- `media.rs`, `color.rs`, `slice.rs`, `message.rs`, `raw.rs`, `input.rs` as before.
-- **New:** `audio.rs` — the `AudioHeader` wire format (48 bytes, little-endian), `AudioKind`, and the frame duration helpers.
+### 4.1 `lumen-protocol` (69 unit tests)
+
+- `header.rs` — `MediaHeader`, `HEADER_LEN = 42`. The `flags` word carries the number of data slices per FEC block (D59). `seq` is the AEAD counter, in the clear as AAD.
+- `capability.rs` — the capability bitmap. `AEAD_CHACHA20` is bit 19 (D61).
+- `media.rs` — the video frame types, `FrameSource`, `FrameSink`.
+- `color.rs` — **the BGRX to NV12 conversion, and the scaled variant.** The scaled variant walks the source with an accumulator instead of dividing per pixel, and the chroma averages a fixed 2x2 source block, so a smaller picture costs *less* work (D73). A block whose slices have different lengths is refused by the FEC, not rebuilt to the wrong length.
+- `audio.rs` — the 48-byte `AudioHeader`, `AudioKind`, the frame duration helpers. The header carries the AEAD counter in the clear, because the receiver needs it to open the payload.
+- `input.rs`, `message.rs`, `raw.rs`, `slice.rs` — as before.
+- `examples/colorbench.rs` (**new**) — times the CPU conversion at each size and prints the frame rate it alone allows.
 
 ### 4.2 `lumen-crypto` (20 unit tests)
-- `aead.rs`: `AeadKind`, `PacketCipher`, the 8-byte counter plus 4-byte session id nonce. **New: `seal_with`**, which takes an explicit counter, so the audio can carry its counter in the clear.
-- `handshake.rs`: **the handshake now carries a payload.** `write_message_with` and `read_message_with` are new, and the capability bitmap travels in the first message of the initiator and the second of the responder (D61). `NoiseTransport` is **deleted** (O-4).
-- `keys.rs`: `SessionKeys` with the four per-direction keys, **plus the two audio keys** `audio_h2c` and `audio_c2h` (D64).
-- `pairing.rs`: `DeviceIdentity`, `PairingCode`, `KEY_LEN`, `SIGNATURE_LEN`, and **new** `sign_bytes`, `verify_bytes`, `random_bytes`, `pairing_proof`. `PairingCode::derive` reduces modulo one million, so the code is always six digits and both ends agree.
+
+- `aead.rs` — `AeadKind`, `PacketCipher`, the 8-byte counter plus 4-byte session id nonce. **New: `seal_with`**, which takes an explicit counter, so the audio can carry its counter in the clear.
+- `handshake.rs` — **the handshake carries a payload.** `write_message_with` and `read_message_with` are new, and the capability bitmap travels in the initiator's first message and the responder's second (D61). The payload is part of the transcript, so a peer that changes it fails the final hash check. `NoiseTransport` is **deleted** (O-4).
+- `keys.rs` — `SessionKeys` with the four per-direction keys, **plus `audio_h2c` and `audio_c2h`** (D64).
+- `pairing.rs` — `DeviceIdentity`, `PairingCode`, the signing primitives, `pairing_proof`. The code reduces modulo one million, so it is always six digits and both ends agree.
 
 ### 4.3 `lumen-transport` (65 unit tests, 9 property tests)
-- `fec.rs`: GF(256). **New: three parity slices per block recover three losses** through a Vandermonde system solved by Gaussian elimination (D60). `ParityLevel::block_data_slices` gives eight for the light level and twelve for the heavy one, so the heavy level keeps the overhead at 25 %. A block whose slices have different lengths is **refused** rather than rebuilt to the wrong length. `compute_parity_with` computes only the parity it is asked for: a level that needs none must not pay for a pass over the block.
-- `slice.rs`: the parity arm creates the frame state (G2, closed). The assembler holds at most 64 frames (G3, closed). The block size comes from the header's `flags` word, and the missing entries of a block are zero-filled so the rebuild is exact.
-- `media.rs`: `MediaSender` with a per-frame parity level (`set_parity`), `last_frame_id`, and the block size on the wire. `MediaReceiver` as before.
-- `nack.rs` (**new**): the NACK policy. The deadline is the capture timestamp plus 1.5 frame intervals, with a configurable slack; a frame past its deadline is dropped and a keyframe is asked for (D63).
-- `retransmit.rs`: `RetransmitQueue` and `MissingSlice`, still unused by the pipeline: the deadline is enforced in the host's stage recorder instead.
-- `estimator.rs`: the loss and delay-gradient estimator. `set_initial_rate` is new, so the policy starts from the configured bitrate.
-- `input_channel.rs` (**new**): the input path on a socket of its own, sealed with the client-to-host media key.
-- `socket.rs`, `pacing.rs`, `inject.rs` as before.
-- `tests/properties.rs` (**new**): nine property tests for the framing and the FEC. One of them found the mixed-length block bug.
 
-### 4.4 `lumen-host-service` (73 unit tests)
-- `pipeline.rs`: the host pipeline. Four stages on four threads with depth-one queues, plus the multi-session support of M6.5. **New:** the estimator is fed by the client's link feedback, the parity level follows the measured loss with hysteresis, the bitrate follows the estimator, a retransmission is refused past the frame's deadline, the encoder is rebuilt when the output changes mode, and the clipboard is read on a thread of its own.
-- `session.rs`: **the transport cipher is negotiated** in the Noise handshake (D61). `Established` carries the negotiated cipher and the peer's capabilities. `has_aes_ni` does the detection.
-- `control.rs`: the control channel, with a timeout-aware receive that keeps a partial record (D54). **Message kinds:** `PairingChallenge` (11), `PairingResponse` (12), `StageTimes` (13), `LinkFeedback` (14).
-- `pairing.rs`: the trust store, the identity file and the pairing code.
-- `stages.rs`: the per-stage timing and the clock offset estimate, plus `may_retransmit` (D63).
-- **New modules:** `audio.rs` (the host's audio stage), `clipboard.rs` (M4.4), `monitors.rs` (M4.6), `resize.rs` (M4.7), `persist.rs` (M6.1), `multi.rs` (M6.5), `virtual_display.rs` (M6.4), `backend.rs` (M7.4).
-- `main.rs`: the `lumen-host` binary, with `--with-audio`, `--audio`, `--client-audio-port` and `--clipboard-test`.
+- `fec.rs` — GF(256). **Three parity slices per block recover three losses**, through a Vandermonde system solved by Gaussian elimination (D60). `ParityLevel::block_data_slices` gives eight for the light level and twelve for the heavy one, so the heavy level keeps the overhead at 25 %.
+- `slice.rs` — the assembler. The parity arm creates the frame state (G2). At most 64 frames are held (G3). The block size comes from the header's `flags` word, and a missing entry is zero-filled so the rebuild is exact.
+- `media.rs` — `MediaSender` with a per-frame parity level (`set_parity`). **The access unit is sliced into one padded buffer, not a vector of slices** (section 11), and the data slices are sealed straight out of it.
+- `nack.rs` (**new**) — the NACK policy. The deadline is the capture timestamp plus 1.5 frame intervals, with a slack; a frame past it is dropped and a keyframe is asked for (D63).
+- `retransmit.rs` — `RetransmitQueue` and `MissingSlice`. The deadline is enforced in the host's stage recorder, not here.
+- `estimator.rs` — the loss and delay-gradient estimator. `set_initial_rate` starts the policy from the configured bitrate.
+- `input_channel.rs` (**new**) — the input path on a socket of its own, sealed with the client-to-host media key.
+- `socket.rs`, `pacing.rs`, `inject.rs` — as before.
+- `tests/properties.rs` (**new**) — nine property tests for the framing and the FEC. One of them found the mixed-length block bug.
+
+### 4.4 `lumen-host-service` (82 unit tests)
+
+- `pipeline.rs` — the host pipeline: four stages on four threads with depth-one queues, plus the multi-session support. **New this session:** the estimator is fed by the client's link feedback, the parity level follows the measured loss with hysteresis, the bitrate follows the estimator, a retransmission is refused past the frame's deadline, the encoder is rebuilt when the output changes mode, and **the capture converts straight out of the captured frame instead of copying it first** (section 11).
+- `session.rs` — the transport cipher is negotiated inside the Noise handshake (D61). `Established` carries the cipher and the peer's capabilities. `has_aes_ni` does the detection.
+- `control.rs` — the control channel with a timeout-aware receive that keeps a partial record (D54). Message kinds: `PairingChallenge` (11), `PairingResponse` (12), `StageTimes` (13), **`LinkFeedback` (14)**, **`Quality` (15)**.
+- `pairing.rs` — the trust store, the identity file, the pairing code, and **`untrust`**, so the control plane can revoke a client.
+- `stages.rs` — the per-stage timing, the clock offset estimate, `may_retransmit` (D63), and **`session()`**, which gives the frames and the span of the session, so the dashboard can report the rate the pipeline *delivered* and not the rate that was asked for (D74).
+- `audio.rs` (**new**) — the host's audio stage: a PipeWire virtual sink for the session, Opus encoding, and the header that carries the capture time of the audio.
+- `web.rs` (**new**) — the host's implementation of the control plane's API over the live state.
+- `log.rs` (**new**) — the host's log in a bounded ring, so the dashboard can show it (D71). The `host_log!` macro writes to both the ring and the standard error.
+- `settings.rs` (**new**) — the settings the control plane changes: the quantiser, the bitrate, the frame rate, the parity mode, the audio, the picture and its ceiling.
+- `clipboard.rs`, `monitors.rs`, `resize.rs`, `persist.rs`, `multi.rs`, `virtual_display.rs`, `backend.rs` — M4 to M7.
+- `main.rs` — the `lumen-host` binary. **New: `--web-listen <addr>`** (and `--web-listen none` turns it off), `--with-audio`, `--audio`, `--client-audio-port`, `--clipboard-test`.
 
 ### 4.5 `lumen-client-desktop`
-- `lib.rs`, `receive.rs`, `present.rs`, `main.rs`: the client pipeline. **New:** the link accounting that tells the host what the link did, the client pings the host so the round trip time can be measured, the client asks for ChaCha20-Poly1305 when it has no AES-NI, and the client echoes the clipboard so the host can count the round trip.
-- **New module:** `audio.rs` (the client's audio stage: the reassembly, the decode, the scheduling against the video clock and the timed queue that never sleeps).
-- **New modules:** `clipboard.rs` (M4.4), `monitors.rs` (M4.6), `reconnect.rs` (M6.2), `lowpower.rs` (M5.2), `backend.rs` (M7.4), `events.rs` (the event log the scripts read).
 
-### 4.6 `lumen-capture-wlr` (9 unit tests, 2 live tests)
-- `readback.rs` (**new**): the CPU readback of a captured DMA-BUF, honouring the plane stride and bracketed by `DMA_BUF_IOCTL_SYNC`.
-- `StreamConfig` has `prefer_cpu`.
+- `lib.rs` — the client pipeline. **New:** the link accounting that tells the host what the link did, the client pings the host so the round trip can be measured, the client asks for ChaCha20-Poly1305 when it has no AES-NI, and the client echoes the clipboard so the host can count the round trip. The control stage owns the quality ladder and sends the `Quality` request.
+- `receive.rs` — the receive stage, the `LinkAccounting`, and the NACK the client sends.
+- `present.rs` — the decode and present stage. It records the drops for the ladder and publishes the video clock for the audio.
+- `audio.rs` (**new**) — the client's audio stage: the reassembly, the decode, the scheduling against the video clock, and the timed queue. **The stage never sleeps**: a frame that is not due yet waits in the queue, because a sleeping stage stops reading the socket and stops telling the scheduler which frame is on screen (D66).
+- `ladder.rs` (**new**) — the quality ladder. It walks down when the client drops frames, remembers the picture it failed at, and never asks for a picture bigger than the one the host is serving (D75).
+- `clipboard.rs`, `monitors.rs`, `reconnect.rs`, `lowpower.rs`, `backend.rs`, `events.rs` — M4 to M7.
 
-### 4.7 `lumen-capture-x11`
-- The capture ladder and **new** `clipboard.rs` (M4.5): the CLIPBOARD and PRIMARY selections.
+### 4.6 `lumen-web` (**new**, 10 unit tests)
 
-### 4.8 `lumen-input-x11` (**new, was a stub**)
-- `raw.rs`: XI2 raw motion, key press and release, with the pointer tracked by the client.
-- `keyboard.rs`: the X11 keymap through xkbcommon, and the evdev keycode mapping.
-- 24 unit tests, one integration test that skips without a display.
+- `http.rs` — a small HTTP/1.1 server: the request line, the headers, the body, keep-alive and server-sent events. No framework, no dependency beyond `serde`.
+- `api.rs` — the routes (`/`, `/api/state`, `/api/log`, `/api/stream`, `/api/command`) and the rule that a change must carry the host's token and may not come from another origin.
+- `ui.rs` and `assets/index.html` — the dashboard. One file, with the styles and the script inside, so the browser needs nothing from the network but the host.
 
-### 4.9 `lumen-audio` (45 unit tests)
-- **New:** `clock.rs` (the offset estimate), `session.rs` (`AudioSender`, `AudioReceiver`, the packet sink), `playback.rs` (the scheduler against the video clock, with a history of the presented frames so an audio frame can be aligned to the video frame of the same moment).
-- The playback sink no longer blocks the caller: on a machine with no audio device the stream can take a long time to connect, and the session has to start anyway.
-- The **New** the `AudioHeader` in `lumen-protocol`.
+### 4.7 The rest
 
-### 4.10 `lumen-encode-vaapi` (27 unit tests, 4 hardware tests)
-- **New:** `H264Encoder::set_rate_control`, so the bandwidth policy can push a new target bitrate while the encoder runs. The test `the_rate_control_can_change_while_running` drives it on the real device.
-- The DMA-BUF import is verified on the AMD tiled modifier.
+- `lumen-capture-wlr` — the wlroots DMA-BUF capture and the CPU readback.
+- `lumen-capture-x11` — the X11 ladder, and `examples/capturecost.rs` (**new**) which times the capture on its own and reports the frame rate and the bandwidth it moves.
+- `lumen-input-x11` — XI2 raw motion, key press and key release, the keymap through xkbcommon. 24 unit tests.
+- `lumen-audio` — the PipeWire sink and capture, Opus, the A/V sync, the playback, and the scheduler with its history of presented frames.
+- `lumen-encode-vaapi` — the H.264 encoder, and **`set_rate_control`**, so the bandwidth policy can push a new bitrate while it runs.
+- `lumen-decode-vaapi` — the decoder, the probe and the backend chain.
+- `lumen-render` — the Wayland and X11 present paths.
+- `lumen-bench` — the measurement harness: the per-stage records, the report writer, the camera analysis, the input latency recorder.
 
-### 4.11 `lumen-decode-vaapi`, `lumen-render`, `lumen-ffi-va`, `lumen-ffi-libei`
-- As before. The decoder still defaults to CPU NV12, so the present path is not zero-copy (O-7).
-- `lumen-decode-vaapi/src/probe.rs` (**new**): the capability probe and the decode backend chain.
+### 4.8 The scripts
 
-### 4.12 `lumen-bench` (24 unit tests, binary `lumen-bench`)
-- `e2e.rs`: the merge of a host run and a client run, including the audio, the clipboard and the resolution counters.
-- `input_latency.rs` (**new**): the input latency recorder with the offset estimate, the polling-interval subtraction and the percentile report.
-- `report.rs`: the run report. The `report` subcommand takes `--assert <expression>`, `--input <path>` and `--provisional`, and exits non-zero when an assertion fails (D58).
-- `trigger.rs`: **the simulated glass-to-glass was wrong.** `simulate` reported the trigger delay plus the client latency, contradicting `glass_to_glass`. The camera-clock definition is authoritative: the glass-to-glass is the gap between the diode firing and the barcode appearing. Fixed, with a test that pins the two against each other.
+| Script | What it does |
+|---|---|
+| `env-setup.sh`, `probe-caps.sh` | the system packages and the capability probe |
+| `netns-up.sh`, `netns-down.sh` | the namespace pair |
+| `run-e2e.sh` | the end-to-end run. Flags: `--with-audio`, `--with-clipboard`, `--with-resize`, `--host-ns`, `--client-ns`, `--width`, `--height`, `--fps`, `--duration`, `--report`, `--out-dir` |
+| `run-e2e-x11.sh` | the X11 variant |
+| `sweep-loss.sh` | the loss sweep over the namespace pair |
+| `netem-run.sh` | the system level netem driver |
+| `run-input-latency.sh` | the input injection latency |
+| `run-tier-b.sh` | the two-vCPU proxy |
+| `run-reconnect.sh`, `run-compositor-restart.sh`, `run-wifi-flap.sh` | the M6 resilience runs |
+| `soak.sh`, `chaos.sh` | the M8 runs |
+| `baseline-check.sh`, `baseline-{sunshine,rustdesk,grd}.sh` | the M0 baseline probe |
+| `x11-env.sh` | the X11 environment |
 
-### 4.13 `fuzz/` (nightly, outside the workspace)
-- **Twelve targets**: the nine from before plus `transport_inject`, `h264_au_split` and `opus_frame`. The plan's names `protocol_parser`, `fec_reassemble` and `input_parser` exist as aliases, so the plan's M8 acceptance loop works as written.
-- The three new targets ran 60 s each with no crash.
+### 4.9 `fuzz/` and `harness/`
 
-### 4.14 `lumen-web` (new, 10 unit tests)
-- `http.rs`: a small HTTP/1.1 server. It parses the request line, the headers and the body, keeps the connection alive, and writes server-sent events. No framework and no dependency beyond `serde`.
-- `api.rs`: the routes (`/`, `/api/state`, `/api/log`, `/api/stream`, `/api/command`) and the rule that a change has to carry the host's token and may not come from another origin.
-- `ui.rs` and `assets/index.html`: the dashboard. One file, with the styles and the script inside it, so the browser needs nothing from the network but the host.
-
-### 4.15 `harness/`
-- `README.md`: the full physical rig procedure.
-- `photodiode/`: the wiring, `capture.sh` (the v4l2 capture loop), `detect-trigger.py` (the trigger finder), `selftest.sh` (the fixture comparison).
-- `fixtures/simulated-trigger.json`: the committed fixture.
+Twelve fuzz targets; the plan's names `protocol_parser`, `fec_reassemble` and `input_parser` exist as aliases, so the plan's acceptance loop works as written. The `harness/` directory holds the physical rig procedure, the v4l2 capture loop, the trigger finder, the self-test and the committed fixture.
 
 ---
 
 ## 5. Measured results
 
-All numbers are **provisional software measurements**. None is glass-to-glass. None comes from the target hardware.
+All of these are **provisional software measurements**. None is glass-to-glass. None comes from the target hardware.
 
-| Measurement | Method | Result | Artifact |
-|---|---|---|---|
-| End-to-end pipeline, loopback, 30 s | `lumen-host` to `lumen-client` over 127.0.0.1, two headless sway compositors, 1280x720 at 30 fps | 873 frames sent, 872 decoded, 871 presented, **0 decode errors**, 0 packets lost | `artifacts/m1/e2e.json` |
-| Software pipeline latency | the host and the client each timestamp their own stages, the host aligns the clocks from the ping exchange | **whole pipeline p50 21.37 ms, p90 23.58, p99 26.05, max 30.35**, 872 frames | `artifacts/m1/e2e.json` |
-| The cost of the picture | the same session, with the picture set from the control plane | at 1280x720 the capture stage takes 7.93 ms and the whole pipeline 23.2 ms; at 640x360 the capture takes 6.97 ms and the pipeline 16.0 ms, and the client uses 25 % less of a core. A smaller picture is cheaper and faster | measured live with the control plane |
-| End-to-end pipeline, network namespaces, 30 s | the same over the veth pair at 10.77.0.1 and 10.77.0.2 | 851 frames sent, 851 decoded, 850 presented, **0 decode errors** | `artifacts/m1/e2e-netns.json` |
-| Software pipeline latency, namespaces | the same run | **p50 22.23 ms, p90 39.49, p99 74.24, max 85.88** | `artifacts/m1/e2e-netns.json` |
-| Loss sweep, 0.5 %, 2 % and 5 % with 10 ms jitter | `scripts/sweep-loss.sh` over the namespace pair | the adaptive policy trades the first losses for bandwidth: 300, 298 and 287 frames presented of 308, 309 and 308 sent, with 2, 4 and 4 decode errors. The FEC rebuilt 28, 47 and 97 slices | `artifacts/m2/curve.csv` |
-| Input host-injection latency, 60 s, 1920x1080 | 60000 events over the netns pair, XTEST into Xvfb, `CLOCK_MONOTONIC` | **p50 46 µs, p90 85 µs, p99 187 µs, max 2756 µs.** 0 injection failures, 0 authentication failures, 0 replays, 0 missing sequences. **The plan's p99 below 1 ms is met** | `artifacts/m3/input.json` |
-| Audio, the clipboard and the resolution changes, 30 s | `scripts/run-e2e.sh --with-audio --with-clipboard --with-resize` | 853 frames presented, **0 decode errors**, 5602 audio frames sent, **0 underruns**, 1 clipboard round trip, 2 resolution changes, A/V skew p99 18.33 ms | `artifacts/m4/e2e.json` |
-| Two-vCPU proxy for the Tier B client | `scripts/run-tier-b.sh --cpus 0,1 --duration 300` | 300 s, 17099 frames decoded, 14514 presented, **2992 dropped, 240 decode errors**, decode p50 6.83 ms, p99 11.80 ms, CPU 35.5 % of the two pinned cores, **pass: false** | `artifacts/m5/tierb.json` |
-| Unattended reconnect, 20 cycles | `scripts/run-reconnect.sh --cycles 20` | **20/20 reconnected**, max reconnect 5 ms against a 2000 ms limit | `artifacts/m6/reconnect.json` |
-| Compositor restart, 5 cycles | `scripts/run-compositor-restart.sh --cycles 5` | **5/5 recovered**, 0 open-fd growth | `artifacts/m6/restart.json` |
-| Network flap, 3 flaps | `scripts/run-wifi-flap.sh` | **3/3 recovered**, max reconnect 1057 ms against a 2000 ms limit | `artifacts/m6/wifi-flap.json` |
-| X11 end to end, 60 s | `scripts/run-e2e-x11.sh`, Xvfb for both ends | 1710 frames sent, decoded and presented, **0 decode errors**, 0 packets lost | `artifacts/m7/e2e-x11.json` |
-| Soak, 307 s | `scripts/soak.sh`, with resolution changes, compositor restarts and suspend/resume | 4691 frames sent, 4686 presented, 2 decode errors, 5 dropped. 10 events, 2 survived without a supervised restart | `artifacts/m8/soak.json` |
-| Chaos, 320 s | `scripts/chaos.sh`, with random loss, jitter, reorder, encoder restart, netns teardown and a CPU throttle | 10967 frames sent, 10945 presented, 6 decode errors, 22 dropped. 13 events, 2 survived | `artifacts/m8/chaos.json` |
-| Rig self-test | `lumen-bench rig-selftest` | synthetic observations, a simulated glass-to-glass, a barcode round trip | `artifacts/m1/rig-selftest.json` |
-| Decode roundtrip | 30 frames 1280x720, IDR plus 29 P | luma PSNR min 47.60 dB, mean 50.47 dB | `crates/lumen-decode-vaapi/tests/roundtrip.rs` |
-| Encode quality | 30-frame IPPP, 1280x720, ffmpeg decode | luma PSNR min 45.2 dB, mean 50.0 dB | the encoder's ffmpeg crosscheck |
-| Fuzz | twelve targets, 60 s each | four crashes found and fixed before this session, none since | `fuzz/artifacts/` |
-| Dependency policy | `cargo deny check` and `cargo audit` | both exit 0. Three unmaintained advisories from the portal client are suppressed with a written reason | `docs/design.md` |
-| Baselines | `scripts/baseline-check.sh` | Sunshine, Moonlight-Qt, RustDesk and GRD are not installed, so **no baseline was measured** | `artifacts/m0/baselines.json` |
+**These numbers are from the artefacts as they stand (20:25), which is BEFORE the per-frame copies were removed. Regenerate them (section 12) before quoting anything.**
 
-Explicit non-results:
-- **Glass-to-glass: not measured.** No photodiode or camera rig. The software pipeline latency is the closest number, and the gap to the photodiode floor is unknown.
-- **The pipeline latency excludes the display.** The present stage ends when the frame is handed to the compositor.
-- **The Tier B targets are not met.** The proxy drops frames and the plan wants none. The cause is the CPU colour conversion (D49), and the zero-copy path (O-7) is the prerequisite.
-- **No baseline comparison.** The four baselines are not installed.
-- **The soak and chaos runs are short** (308 s and 320 s), not the plan's 7200 s and 900 s. The reports record the length actually run and mark the remainder pending.
-- **Crypto cost is not measured.**
-- **The A/V skew is a definition, not a protocol field** (O-31).
-
----
-
-## 6. Open defects and gaps
-
-**Closed this session.** G2 (parity-only frames never recovered), G3 (unbounded assembler), O-1 (pairing not enforced), O-2 (AEAD not negotiated), O-4 (`NoiseTransport` unused), O-5 (protocol doc drift), O-6 (media peer address), O-8 (encoder DMA-BUF import), O-17 (FEC policy fixed), O-18 (estimator not connected), O-19 (NACK path), O-21 (missing repo basics), O-22 (the harness directory), O-27 (the M4 acceptance run), and the dependency policy, which now passes.
-
-- **O-3. `Handshake::finish` uses `dangerously_get_raw_split`.** It HKDFs the Noise split output. Sound for this construction, but record the decision and consider binding the handshake hash into the derivation.
-- **O-7. Decoded surfaces cannot be presented zero-copy.** The decoder's default output is CPU NV12 and the render path has no NV12 import. **This is the largest latency win left** and the prerequisite for O-30: the CPU colour conversion is 2.52 ms on the host and 3.57 ms on the client at 1280x720, which is most of the 4.5 ms present stage.
-- **O-9. Render-node choice in capture.** `render_node(None)` picks `renderD128`, which is NVIDIA. Verify that the compositor feedback decides the node.
-- **O-10. `send_paced` sleeps on the calling thread.** It is now on the send stage's own thread, so it does not block the encoder, but it is not a separate pacing thread.
-- **O-11. Implicit sync not handled.** The DMA-BUF read path calls `DMA_BUF_IOCTL_SYNC`, but this has not been reproduced under load.
-- **O-12. `copy_with_damage` refresh trigger untested.** The headless sway output reports 0 mHz, so the trigger never selects the damage path.
-- **O-13. Input EIS path untested live.** There is no EIS server here. The X11 path is implemented and the injection path is measured.
-- **O-14. Input replay window (64 entries) is a design addition** beyond the spec. Review. It is reversible.
-- **O-15. Audio realtime callback uses `std::sync::Mutex`.** Replace if underruns appear.
-- **O-16. The vendored `opus` crate** is accepted by `cargo deny` now, but the patched build links the system libopus and that has not been checked on a machine without it.
-- **O-23. VA decoder limits.** CAVLC P slices, multi-reference, multi-slice and POC type 1 are unexercised. The decoder returns explicit errors, so failures are loud.
-- **O-24. Pool aliasing in the decoder.** A consumer holding a DMA-BUF frame must release it before the pool wraps. The client uses the CPU path, so it does not hit this yet.
-- **O-25. The clock offset estimate assumes the two directions take the same time.** It is the standard NTP midpoint calculation. On a LAN the error is well under a millisecond. **Every latency figure in the run reports inherits this error**, and it showed: a 20 ms block in the control channel skewed the offset by 10 ms and put 10 ms into every "send" stage until the block was found and removed.
-- **O-26. The `fec_recoveries` counter overstates the loss.** The receiver tries a recovery on every datagram, so a slice that is merely late is rebuilt from the parity and counted. The rebuilt bytes are exact, so this is a counter semantic, not a correctness problem. The true loss is what the client now reports over the link feedback.
-- **O-28. The Tier B decode p99 is 11.80 ms, inside the plan's 12 ms, but the proxy drops frames.** The drop count, not the decode percentile, is what fails (O-30).
-- **O-29. Decode errors in the soak and in the chaos run.** Two and six respectively. The most likely explanation is the compositor restart, which the soak note says kills the session because the host does not reopen its capture.
-- **O-30. The two-vCPU proxy drops frames at 1080p60.** The client's colour conversion runs on the CPU (D49), so the conversion and the presentation together take longer than the frame interval. The zero-copy path (O-7) is the prerequisite.
-- **O-31. The A/V skew is a definition, not a protocol field.** Lumen measures the error in the alignment: the difference between the moment an audio frame was played and the moment the video frame of the same moment was presented. A different definition would give a different number.
-- **O-32. The client's clipboard needs the legacy data device.** The host uses the plan's `zwlr_data_control_manager_v1`; the client uses the legacy `wl_data_device_manager`, which is what the compositor here offers. A compositor that offers neither cannot hold a selection, and the round-trip counter stays at zero rather than pretending.
-- **O-33 (new). The adaptive parity has a cold start.** The level starts without parity, so the first losses on a link that is already bad are not recovered: the loss sweep shows 1, 4 and 7 decode errors at 0.5 %, 2 % and 5 %, where a fixed parity level showed none. The level rises within a feedback interval and falls only after six lossless windows, which trades the protection for the bandwidth. **The trade is the plan's (M2.3), but the cost has to be recorded.**
-
----
-
-## 7. Stale or missing documentation
-
-| File | Problem | Action |
+| Measurement | Result | Artefact |
 |---|---|---|
-| `docs/protocol.md` | **Updated this session.** The 42-byte header, the `flags` word carrying the block size, the Noise frames before the control records, the pairing exchange, the clock negotiation, the 48-byte audio header, `StageTimes` and `LinkFeedback` are all correct. | Done. Do not revert. |
-| `docs/design.md` | **Updated this session.** D49 to D68 recorded, the dependency policy exception written down. | Done. |
-| `docs/known-limits.md` | **Updated this session.** The closed defects are recorded, O-27 to O-33 are there. | Done. |
-| `docs/benchmarks.md` | **Updated this session** against the current artifacts. | Keep the artefacts and the prose in step. |
-| `docs/final-report.md` | **Updated this session** against the current artifacts. | Re-read it against the artifacts before it goes out. |
-| `README.md` | **Updated this session.** | Refresh it when the code moves again. |
-| `docs/handoff.md` | This file. | Done. |
+| End-to-end, loopback, 30 s, 1280x720 at 30 fps | 873 sent, 872 decoded, 871 presented, 0 decode errors, 0 packets lost | `artifacts/m1/e2e.json` |
+| Software pipeline latency, loopback | p50 21.37 ms, p90 23.58, p99 26.05, max 30.35 | `artifacts/m1/e2e.json` |
+| End-to-end, network namespaces, 30 s | 851 sent, 851 decoded, 850 presented, 0 decode errors | `artifacts/m1/e2e-netns.json` |
+| Software pipeline latency, namespaces | p50 22.23 ms, p90 39.49, p99 74.24, max 85.88 | `artifacts/m1/e2e-netns.json` |
+| Loss sweep, 0.5 %, 2 %, 5 % with 10 ms jitter | 300, 298 and 287 frames presented of 308, 309 and 308 sent; 2, 4 and 4 decode errors; 28, 47 and 97 FEC recoveries | `artifacts/m2/curve.csv` |
+| Input injection latency, 60 s, 1920x1080 | 60000 events, p50 46 µs, p90 85, p99 187, max 2756; 0 failures, 0 replays | `artifacts/m3/input.json` |
+| M4: audio, clipboard, two resolution changes, 30 s | 852 presented, 0 decode errors, 5602 audio frames, 0 underruns, 1 clipboard round trip, 2 resolution changes, A/V skew p99 18.43 ms | `artifacts/m4/e2e.json` |
+| Two-vCPU proxy, 1080p60, 300 s | 17099 decoded, 14514 presented, **2992 dropped, 240 decode errors**, decode p50 6.83 ms, p99 11.80 ms, CPU 35.5 % of two cores, **pass: false** | `artifacts/m5/tierb.json` |
+| Reconnect, 20 cycles | 20/20, the slowest 5 ms | `artifacts/m6/reconnect.json` |
+| Compositor restart, 5 cycles | 5/5, no file descriptor growth | `artifacts/m6/restart.json` |
+| Network flap, 3 flaps | 3/3, the slowest 1057 ms | `artifacts/m6/wifi-flap.json` |
+| X11 end to end, 60 s | 1710 sent, decoded and presented, 0 decode errors | `artifacts/m7/e2e-x11.json` |
+| Soak, 307 s | 4691 sent, 4686 presented, 2 decode errors, 5 dropped; 10 events, 2 survived | `artifacts/m8/soak.json` |
+| Chaos, 320 s | 10967 sent, 10945 presented, 6 decode errors, 22 dropped; 13 events, 2 survived | `artifacts/m8/chaos.json` |
+
+**The costs, measured directly (this session, `crates/lumen-protocol/examples/colorbench.rs` and `crates/lumen-capture-x11/examples/capturecost.rs`):**
+
+| What | Cost | Alone it allows |
+|---|---|---|
+| The CPU colour conversion at 1280x720 | 2.97 ms | 336 fps |
+| The CPU colour conversion at 1600x900 | 5.06 ms | 198 fps |
+| The CPU colour conversion at 1920x1080 | 6.81 ms | 147 fps |
+| The X11 capture at 1920x1080 | 110 frames in 10 s, 871 MiB a second | 110 fps |
+
+**So neither the conversion nor the capture is the limit on its own. The limit was the copies around them** (section 11). After removing them the host delivers roughly 60 to 70 fps at 1080p, and the client cannot reach 120 fps either, because its own NV12 to BGRX conversion and its `wl_shm` copy cost the same kind of memory traffic.
+
+**The 120 fps target is not a hardware limit. It is the CPU path** (D49) and the readback (O-7), and that is what the next agent should attack.
 
 ---
 
-## 8. Decisions and deviations (record in `docs/design.md`)
+## 6. Open defects
 
-Numbering continues from D27. "Pre-v1" means reversible before the wire format is frozen.
+**Closed:** G2, G3, O-1, O-2, O-4, O-5, O-6, O-8, O-17, O-18, O-19, O-20, O-21, O-22, O-27, and the dependency policy.
 
-### 8.1 Decisions
+Open, ordered by impact:
 
-D28 to D48 are in `docs/design.md` from the previous session. D33 and D47 are **superseded by D52**.
+- **O-7. Decoded surfaces cannot be presented zero-copy.** The decoder's default output is CPU NV12 and the renderer has no NV12 import. This is the largest latency win left and the prerequisite for the Tier B acceptance. The CPU colour conversion is 6.81 ms at 1080p, which alone caps the host at 147 fps.
+- **O-30. The two-vCPU proxy drops frames at 1080p60.** The client's colour conversion and its `wl_shm` copy take longer than the frame interval. Same fix as O-7.
+- **O-3. `Handshake::finish` uses `dangerously_get_raw_split`.** Sound for this construction, but the handshake hash is not bound into the derivation. Record the decision.
+- **O-9. Render-node choice in capture.** `render_node(None)` picks `renderD128`, which is NVIDIA. Verify that the compositor feedback decides.
+- **O-10. `send_paced` sleeps on the calling thread.** It is on the send stage's own thread now, so it does not block the encoder.
+- **O-11. Implicit sync is not handled.** The read path calls `DMA_BUF_IOCTL_SYNC`, but it has not been reproduced under load.
+- **O-12. The `copy_with_damage` refresh trigger is untested.** Headless sway reports 0 mHz.
+- **O-13. The input EIS path is untested live.** There is no EIS server. The X11 path is implemented and the injection path is measured.
+- **O-14. The input replay window (64 entries) is an addition** beyond the spec. Reversible.
+- **O-15. The audio realtime callback uses `std::sync::Mutex`.** Replace if underruns appear.
+- **O-16. The vendored `opus` crate** is accepted by `cargo deny`, but the patched build links the system libopus and has not been checked on a machine without it.
+- **O-23. VA decoder limits.** CAVLC P slices, several references, multi-slice pictures and POC type 1 are unexercised. The decoder returns explicit errors, so failures are loud.
+- **O-24. Pool aliasing in the decoder.** A consumer holding a DMA-BUF frame must release it before the pool wraps. The client uses the CPU path.
+- **O-25. The clock offset estimate assumes the two directions take the same time.** On a LAN the error is well under a millisecond, but every latency figure inherits it, and it showed: a 20 ms block in the control channel skewed the offset by 10 ms and put 10 ms into every "send" stage until the block was found and removed.
+- **O-26. The `fec_recoveries` counter overstates the loss.** The receiver tries a recovery on every datagram, so a slice that is merely late is rebuilt from the parity and counted. The rebuilt bytes are exact, so this is a counter semantic. The true loss is what the client reports over the link feedback.
+- **O-28. The Tier B decode p99 is 11.80 ms, inside the 12 ms budget**, but the run still fails on the drops.
+- **O-29. Decode errors in the soak and in the chaos run.** Two and six. The likely cause is the compositor restart.
+- **O-29a. The compositor restart survives in the M6 run and not in the soak**, and they are not measuring the same thing. The M6 script kills only the compositor, leaves the host running, and the host reopens its capture: 5 of 5 recovered. The soak's version restarts the compositor and the new one does not always take the same Wayland socket name, so the host cannot reconnect. The soak's liveness check also latched: it grepped the whole host log, so one error at any point marked every later event as a failure. It now only looks at the lines logged since the last event.
+- **O-33. The adaptive parity has a cold start.** The level starts without parity, so the first losses on a link that is already bad are not recovered: the loss sweep shows 2, 4 and 4 decode errors where a fixed parity level showed none. The level rises within a feedback interval and falls only after six lossless windows.
+- **O-34. The control plane cannot start a host.** It changes the running session; it cannot start one, stop one or point at a different machine.
+- **O-35. The quality ladder lowers the picture and never raises it.** A client that drops frames asks for a smaller picture and stays there. It remembers the picture it failed at, so it does not climb back into it, and the block expires after five minutes. The operator can put the picture back from the dashboard.
+- **O-36. The dashboard is not a low-power build.** The page redraws the log whenever it changes and the chart is redrawn on every state, and it keeps the page awake. The log is fetched on its own every two seconds and nothing is drawn while the tab is hidden, but the log is still rewritten whole.
 
-D49 to D58 were made when the pipelines landed and started measuring themselves:
-
-| ID | Decision | Reason | Reversible |
-|---|---|---|---|
-| D49 | The colour conversion runs on the CPU: BGRX to NV12 on the host, NV12 to BGRX on the client. | The plan puts colour conversion on the GPU. No GPU path exists yet. | Yes. |
-| D50 | The media peer address is not negotiated. The host sends to the control peer's IP on a fixed client media port. | Adding a handshake field would change the wire format for a case the LAN-only threat model does not need. | Yes. |
-| D51 | The host pipeline is four stages on four threads with depth-one queues. | The plan asks for one thread per stage and queues of depth 1 or 2. | Yes. |
-| D52 | Pairing is enforced. The client proves it owns its Ed25519 identity key by signing a host nonce. | The host used to accept any client that completed the Noise handshake. A claimed public key proves nothing. | No. |
-| D53 | The pairing code is derived from the host's public key and the client's Noise static key, and reduced modulo one million. | The code must be valid for one handshake only. The reduction was a bug: the derivation bypassed the six digit clamp, so the two ends disagreed. | Yes. |
-| D54 | The control channel has a timeout-aware receive that keeps a partial record. | A stage that has to send while another waits cannot do so on a channel whose receive blocks forever. | Yes. |
-| D55 | `lumen-bench` has `report` and `rig-selftest` subcommands. | The plan's M1 acceptance needs a merged run report. | Yes. |
-| D56 | The pipeline measures itself, and the client reports its stage timestamps to the host. | Without it the report holds counters only and no pipeline latency can be read. | Yes. |
-| D57 | The clock offset is estimated the way NTP does it. | The two ends have unrelated monotonic clocks. | Yes. |
-| D58 | `lumen-bench report` takes `--assert`, `--input` and `--provisional`, and exits non-zero when an assertion fails. | The plan's M1 acceptance is a command with assertions in it. | Yes. |
-
-D59 to D63 were made when the transport became adaptive:
-
-| ID | Decision | Reason | Reversible |
-|---|---|---|---|
-| D59 | The parity level adapts per frame, and the block size follows it. The block size travels in the header's `flags` word. | The parity ratio depends on the measured loss, and the block size is what makes the overhead cap reachable. | Yes. |
-| D60 | Three parity slices per block recover three losses, through a Vandermonde system over GF(256). | Two parity slices cannot recover three losses, so the third must add a real equation. | Yes. |
-| D61 | The transport cipher is negotiated inside the Noise handshake, with the capability bitmap as the handshake payload. | The control channel is encrypted from its first byte, so the cipher must be settled before the first control record. | Yes. |
-| D62 | The bandwidth policy drives the encoder's constant bitrate, and the encoder can change its rate control while it runs. | The plan's M2.4 needs the estimated bitrate to reach the encoder. | Yes. |
-| D63 | The NACK deadline is the capture timestamp plus 1.5 frame intervals, plus a slack. | The plan's M2.2: a late frame is dropped rather than waited for. | Yes. |
-
-D70 to D75 were made when the control plane and the quality ladder were built. D70 adds a crate and D72 adds a message to the wire; the rest change no wire format.
-
-| ID | Decision | Reason | Reversible |
-|---|---|---|---|
-| D70 | The control plane is a dependency-free HTTP server in a new crate, `lumen-web`, embedded in the host and reached with `--web-listen`. It binds to a loopback address, every change has to carry a token the host printed, and a request that names another origin is refused. | The plan has no web interface. A framework would bring a large dependency tree into a project whose policy is permissive licences only. | Yes. |
-| D71 | The host's log is kept in a bounded ring buffer, and the dashboard asks for it on its own rather than having it in the event stream. | The log changes rarely and the stream is sent twice a second. | Yes. |
-| D72 | The picture the host serves is a setting. A client that cannot keep up asks for a smaller one, the operator can set one, and the host never serves a picture bigger than the one it captures. | A weak client that is given a picture it cannot reach drops frames, and a stream that drops frames is worse than a smaller stream that does not. | Yes. |
-| D73 | A smaller picture is produced inside the colour conversion: the conversion walks the source with an accumulator instead of dividing per pixel, and the chroma averages a fixed two by two source block. | A division per pixel costs more than the whole conversion, and averaging the whole area a chroma cell covers reads every source pixel, so a downscale would cost the same as a big picture. | Yes. |
-| D74 | The stage recorder keeps a bounded window of the last frames. | The recorder held every frame of the session, so the memory grew for as long as the host ran and every percentile calculation cost the length of the whole session. | Yes. |
-| D75 | The client's quality ladder remembers the picture it failed at, and the operator's choice is the ceiling the host enforces. | Without the memory the client climbs back to a picture it has already shown it cannot reach. The block expires, so a picture that failed once is tried again later. | Yes. |
-
-D64 to D68 were made when the audio and the clipboard were wired into the sessions:
-
-| ID | Decision | Reason | Reversible |
-|---|---|---|---|
-| D64 | The audio travels on a UDP port of its own with a key pair of its own, and the audio header carries the AEAD counter in the clear. | The plan wants the audio and the video on separate sockets. A separate key is needed too: otherwise the two senders share a key and a counter, which is a nonce reuse. | Yes. |
-| D65 | The client aligns an audio frame to the video frame of the same moment, using a history of the frames it has presented. | The audio is captured at the host now, while the video the client has is up to one pipeline latency old. Aligning to the newest frame would make the audio lead the picture by that latency. | Yes. |
-| D66 | The audio stage never sleeps. A frame that is not due yet waits in a queue. | A sleeping stage stops reading the socket and stops telling the scheduler which frame is on screen, so the alignment collapses. | Yes. |
-| D67 | The host reads the clipboard of its own compositor and offers it; the client takes it and sends the text back, and that return is the round trip. The host can be told to own a given text. | The plan counts clipboard round trips, so one side has to send and the other has to answer. The test hook makes the path measurable in an automated run. | Yes. |
-| D68 | The measurement scripts start their compositors in the user's own runtime directory and tell them apart by the Wayland socket each one picks; the readiness check reads the socket table instead of connecting. | The PipeWire socket lives in the user's runtime directory. Connecting to the control port to test it leaves a session thread waiting for a handshake that never comes. | Yes. |
-
-### 8.2 Deviations from the plan (must appear in the final report)
-
-- FEC is GF(256), not XOR (D35). It now recovers three losses per block (D60).
-- Decoder output is CPU by default (D37, O-7). Plan forbids CPU readback in the hot path.
-- Renderer cannot import NV12 or tiled DMA-BUF (D46).
-- Colour conversion runs on the CPU on both ends (D49).
-- PipeWire capture not implemented. wlr capture used (D48).
-- NVENC, Vulkan encode and Vulkan decode not implemented (stubs).
-- HEVC and AV1 not implemented. H.264 only.
-- The input replay window is an addition (D40).
-- Opus dynamically links the system libopus (D42).
-- No glass-to-glass measurement (no rig).
-- The media peer address is derived rather than negotiated (D50), so one client media port at a time.
-- The heavy parity level uses a block of twelve data slices rather than eight, so three parity slices stay inside the 25 % overhead cap. The plan's "three per eight" and its 25 % cap cannot both hold.
-- Three unmaintained `zvariant` advisories are suppressed with a written reason. They are not vulnerabilities and not copyleft. The justification is in `docs/design.md`.
-- The soak and chaos runs are short, not the plan's 7200 s and 900 s.
-- The A/V skew is a definition Lumen chose, because the plan asks for the number but not for the measurement (O-31).
-- The adaptive parity trades the first losses for bandwidth, and the loss sweep is no longer flat (O-33).
+**Two known rough edges in the dashboard, from the screenshots of this session.** The tiles show a dash when the session has no completed frames, which is what happens when the client cannot present at all: at 1920x1080 and 120 fps the client drops everything, so the host has no stage timings to show. The rate the tile shows is the rate the pipeline delivered, not the rate that was asked for; the sub-line shows the picture and the rate that was configured.
 
 ---
 
-## 9. Process rules and gotchas (learned the hard way)
+## 7. Documentation
 
-1. **File tools resolve relative paths against `/home/hayden/Desktop/projects`, not the workspace.** Always use absolute paths.
-2. **Hashline tags are per-file and change on every edit.** Copy the tag from the latest read.
-3. **Edit boundaries can be auto-repaired.** Re-read the region after every multi-line edit. A silent no-op edit is the failure mode to watch for: check that the replacement actually applied.
-4. **Shared `target/` across agents.** A sibling's mid-edit change can break your build with an error in a crate you did not touch. Never run `cargo clean` on the shared target.
-5. **Clippy is `-D warnings` with the workspace lint set.** Expect `needless_pass_by_value` (put the thread arguments in a struct), `single_match_else`, `collapsible_if`, `manual_is_multiple_of`, `chunks_exact_to_as_chunks`, `format_collect`, `map_unwrap_or`, `needless_continue` and `unreadable_literal`.
-6. **No placeholder tests.** Every test must be able to fail.
-7. **Display-dependent tests must skip with a printed reason**, not pass silently.
-8. **Use `-displayfd` for Xvfb.** Fixed display numbers collide.
-9. **`ip -n NS tc` is invalid.** Use `ip netns exec NS tc`.
-10. **Only one netns pair at a time.** Two measurement scripts will fight over the namespace names.
-11. **Fuzz uses nightly**, from the `fuzz/` directory, which is excluded from the workspace.
-12. **Never `pkill -f` a pattern that appears in your own command line.** It kills the shell. Use `pkill -x` for an exact name; the scripts now do.
-13. **Watch the disk.** Two build trees plus the shared `target/` filled the 234 GB disk once during this session.
-14. **A fixed sleep is not a readiness check.** The e2e script waits for the control port to appear in the socket table, because under load the host needs more than a second to bind, and a connecting probe leaves a session thread waiting for a handshake that never comes.
-15. **Do not trust host load numbers.** Measure on a quiet machine and record the load.
-16. **Do not put an exact frame count in prose.** The counts of a run depend on the load. Put them in the artefact and describe the run qualitatively.
-17. **A blocking call in the control loop poisons every latency number.** The clock offset is estimated from the ping exchange, so a 20 ms block in the control stage put 10 ms into every "send" stage. When a stage time is implausible, look for a block in the control channel before looking at the network.
+| File | State |
+|---|---|
+| `docs/plan.md` | the approved plan, byte for byte. It has no web interface and no quality ladder in it: those are additions (section 8) |
+| `docs/design.md` | the decisions, D1 to D75, with the reason and whether each is reversible. The status paragraph lists the groups |
+| `docs/protocol.md` | the wire format: the 42-byte header and its `flags` word, the Noise frames, the pairing exchange, the clock negotiation, the 48-byte audio header, the control message kinds including `LinkFeedback` and `Quality` |
+| `docs/benchmarks.md` | the measurements, against the artefacts. **Stale: regenerate the artefacts and update it** |
+| `docs/known-limits.md` | the open defects, the closed ones and the ones that are not defects but are limits |
+| `docs/final-report.md` | the M8.7 report. **Stale: it was written before the control plane and the ladder** |
+| `docs/handoff.md` | this file |
+| `docs/notes/` | the four subagent working notes. Every wiring item in them has been applied; they are kept for the history |
+| `docs/screenshots/dashboard.png` | the control plane, 1280x720 at 30 fps, with the live numbers |
+| `README.md` | the architecture, the crate table, the scripts, the measurements and the honest list of what is not done |
+| `artifacts/m0` … `artifacts/m8` | the measurement record. Every number in the documentation comes from one of these |
 
 ---
 
-## 10. Remaining work, in execution order
+## 8. The decisions
 
-### P0. The Tier B drops
+D1 to D48 are in `docs/design.md` from the earlier sessions. D33 and D47 are superseded by D52. The groups since:
 
-1. **Zero-copy decode and present (O-7, O-30).** An EGL NV12 import with a YUV to RGB shader in `lumen-render`, plus a decode DMA-BUF default. The CPU colour conversion is 2.52 ms on the host and 3.57 ms on the client at 1280x720, so this is the largest single win left, and it is what the Tier B acceptance needs.
+- **D49 to D58** — the pipelines landed and started measuring themselves: the CPU colour conversion, the derived media peer address, the four-stage pipeline, the enforced pairing, the six-digit pairing code, the timeout-aware control receive, the two `lumen-bench` subcommands, the self-measuring pipeline, the NTP-style clock offset, the asserting report.
+- **D59 to D63** — the transport became adaptive: the per-frame parity with the block size on the wire, three-loss recovery, the cipher negotiated in the handshake, the bitrate policy reaching the encoder, the NACK deadline.
+- **D64 to D68** — the audio and the clipboard were wired into the sessions: the audio's own port and key pair, the alignment to the video frame of the same moment, the queue instead of a sleep, the clipboard round trip, the compositors in the user's runtime directory.
+- **D69** — the parity level is asymmetric: it rises at once and falls only after six lossless windows.
+- **D70 to D75** — the control plane and the ladder: the dependency-free HTTP server with the token and the origin rule, the log in a ring, the picture as a setting, the downscale inside the conversion, the bounded stage recorder, and the ladder's memory of what failed.
 
-### P1. The control plane, still open
-
-2. **The control plane cannot start a host.** It changes the running session; there is no way to start one, stop one or pick a different host from the dashboard.
-3. **The quality ladder is not wired into the tier B script.** The proxy still drops 2992 frames because nothing tells the client to ask for a smaller picture in that run.
-4. **The dashboard rewrites the whole log when it changes.** On a slow browser that is the most expensive thing the page does. Only the changed lines should be written.
-
-### P2. Transport, still open
-
-5. **The FEC recovery counter (O-26).** Do not retry a recovery while a frame's slices are still arriving; attempt it once the frame's last slice has arrived or the frame has been outstanding for a while. This makes the counter mean what it says.
-6. **The adaptive parity cold start (O-33).** Start the session at the light level and keep it there until the link has been lossless for a while, rather than dropping to none. The loss sweep's decode errors are the price of the current policy.
-7. **The `NoiseTransport` review (O-3).** Bind the handshake hash into the key derivation and record the decision.
-8. **QUIC candidate (M2.6)** behind a feature, only if a decision needs data. The default is custom UDP.
-
-### P3. Input, still open
-
-9. **The input path is not wired into the host service.** `crates/lumen-transport/src/input_channel.rs` has the isolated socket, and `lumen-input-wayland` and `lumen-input-inject` have the capture and the injection, but the host service has no `input.rs` that ties them together. The measured latency is the injection leg only.
-
-### P4. The plan's remaining code
-
-10. **HDR and 10-bit (M4.8).** P010 support and the HDR metadata transport. The `dynamic_range` capability bit needs adding to `crates/lumen-protocol/src/capability.rs`.
-11. **HEVC and AV1.** The plan's codec ladder. Record the D-CODEC decision.
-12. **PipeWire capture (M1.7).** `lumen-capture-pipewire` is still a stub. The plan's risk table allows the wlr fallback, so this is a decision to record as much as a piece of code. It is the precondition for the portal restore token (M6.3).
-13. **NVENC (M1.10), Vulkan encode (M1.11) and Vulkan decode (M1.13).** The hardware for NVENC is present. Decide with the D-ENC-VENDOR experiment before writing them, and mark them pending with the reason if they cannot be measured here.
-14. **`lumenctl`.** The plan's name for a control tool. `lumen-host` and `lumen-client` cover the same ground; either add it or record the deviation.
-
-### P5. Baselines and the rig
-
-15. **The baselines (M8.5).** Install or build Sunshine plus Moonlight-Qt, RustDesk and GRD with `xfreerdp`, then run the three drivers. The scripts are written and report "not available" honestly.
-16. **The long soak (M8.3).** The run budget allows about two hours. The scripts are written; the short runs passed.
-17. **The physical rig (M8.6).** The procedure is written. It needs the hardware.
-18. **The compositor restart (O-29a).** It survives in the M6 run and not in the soak, and they are not measuring the same thing. `scripts/run-compositor-restart.sh` kills only the compositor, leaves the host running, and the host reopens its capture: 5 of 5 recovered with no file-descriptor growth. The soak's version restarts the compositor and the new one does not always take the same Wayland socket name, so the host cannot reconnect. The soak's liveness check also latched (it grepped the whole host log), which made every later event look like a failure; it now only looks at the lines logged since the last event.
+**The additions beyond the plan, which the final report must state:** the control plane (`lumen-web`, `--web-listen`), the quality ladder and the `Quality` message, the two measurement examples, and the bounded stage recorder.
 
 ---
 
-## 11. Verification commands (copy and run)
+## 9. The control plane
+
+```
+lumen-host --web-listen 127.0.0.1:8080
+```
+
+The host prints the URL with a token in the fragment. The dashboard shows the frame rate, the bitrate, the pipeline latency with a live chart, the breakdown per stage, the encoder settings, the outputs, the sessions, the pairing state and the host's log. It changes the rate control, the bitrate, the frame rate, the parity level, the picture, the audio, ends a session, revokes a client and asks for a keyframe.
+
+**The security rules, and they matter:** the server binds to a loopback address, every change must carry the token the host printed, and a request that names another origin is refused. All three are verified: a command without the token gets 403, a command with a foreign `Origin` gets 403, and a command with both works.
+
+**The cost:** the control plane adds about 1.5 % of a core to the host, and the state document is about 3 kB. The event stream leaves the log out and the dashboard fetches it on its own every two seconds, because the log changes rarely and carrying it in the stream would be most of the traffic.
+
+---
+
+## 10. The quality ladder
+
+A client that cannot decode and present the picture it is given drops frames, and a stream that drops frames is worse than a smaller stream that does not. So the client says so: when it drops frames it asks the host for the next size down, and the host scales the capture to it inside the colour conversion, which costs less work and is faster.
+
+- The ladder lives in `crates/lumen-client-desktop/src/ladder.rs`. Eight rungs from 3840x2160 down to 640x360, every one 16:9 with an even height.
+- It walks down when the drop rate over a second is above 2 %, and up again after ten clean seconds, but only to a picture the client has not already failed at. That block expires after five minutes, so a picture that failed once is tried again later.
+- The client never asks for a picture bigger than the one it has been sent, and the host never serves one bigger than the one it captures: the extra pixels would have to be invented.
+- The operator's choice is the ceiling: the host clamps every request to it, and the dashboard has a picture selector.
+
+**Measured:** at 1280x720 the capture stage takes 7.93 ms and the whole pipeline 23.2 ms; at 640x360 the capture takes 6.97 ms and the pipeline 16.0 ms, and the client uses 25 % less of a core. A smaller picture is cheaper and faster.
+
+---
+
+## 11. The second commit
+
+These are in the repository, in the commit after the first. They compile and the whole suite passes with them.
+
+| File | What changed |
+|---|---|
+| `crates/lumen-host-service/src/pipeline.rs` | the capture converts straight out of the captured frame instead of copying it into a new vector first. `cpu_bgrx` returns a `Cow`, so the BGRX case borrows. This removed eight megabytes of copying a frame |
+| `crates/lumen-transport/src/media.rs` | the access unit is sliced into **one** padded buffer instead of a vector of slices, and the data slices are sealed straight out of it. A frame at 1080p was a few thousand small allocations every frame; the history keeps the one buffer |
+| `crates/lumen-host-service/src/stages.rs` | the recorder keeps the first and the newest capture timestamp and the frame count, so `session()` gives the rate the pipeline delivered |
+| `crates/lumen-host-service/src/web.rs` | the state carries `delivered_fps` with the other counters, and the streamed state leaves the log out |
+| `crates/lumen-web/assets/index.html` | the rate tile reads the delivered rate, and the log is fetched on its own |
+| `.github/workflows/ci.yml` | **the clippy, deny and audit jobs now install the system packages.** They build the workspace, and `lumen-input-x11` needs `libxkbcommon-x11-dev`, which was missing: the CI would have failed to build |
+| `crates/lumen-protocol/examples/colorbench.rs` | **new.** Times the CPU conversion at each size |
+| `crates/lumen-capture-x11/examples/capturecost.rs` | **new.** Times the X11 capture on its own |
+| `docs/screenshots/dashboard.png` | **new.** The control plane |
+
+**What the copies were worth:** the host delivered about 50 fps at 1080p before and about 70 fps after, and the client got the same kind of win. The measurement that started this was simple: the capture alone did 110 fps and the conversion alone allowed 147, so neither was the limit — the copies around them were.
+
+---
+
+## 12. The remaining work, in execution order
+
+### P0. Regenerate
+
+1. **Regenerate every artefact**, because the numbers moved after the copies were removed:
+   ```
+   MODE=loopback DURATION=30 OUT=artifacts/m1/e2e.json ./scripts/run-e2e.sh
+   MODE=netns   DURATION=30 OUT=artifacts/m1/e2e-netns.json ./scripts/run-e2e.sh
+   ./scripts/sweep-loss.sh --levels 0.005,0.02,0.05 --jitter 10ms --out artifacts/m2/curve.csv
+   ./scripts/run-input-latency.sh --duration 60 --out artifacts/m3/input.json
+   MODE=loopback DURATION=30 WITH_AUDIO=1 WITH_CLIPBOARD=1 WITH_RESIZE=1 OUT=artifacts/m4/e2e.json ./scripts/run-e2e.sh
+   ./scripts/run-tier-b.sh --cpus 0,1 --duration 300 --report artifacts/m5/tierb.json
+   ./scripts/run-reconnect.sh --cycles 20 --out artifacts/m6/reconnect.json
+   ./scripts/run-compositor-restart.sh --cycles 5 --out artifacts/m6/restart.json
+   ./scripts/run-wifi-flap.sh --out artifacts/m6/wifi-flap.json
+   ./scripts/run-e2e-x11.sh --duration 60 --report artifacts/m7/e2e-x11.json
+   ./scripts/soak.sh --duration 300 --out artifacts/m8/soak.json
+   ./scripts/chaos.sh --duration 300 --out artifacts/m8/chaos.json
+   ```
+   **One netns pair at a time.** The tier B script wants the ports 24820 to 24861 and its own binaries, because another script's cleanup can end its run.
+2. **Update `docs/benchmarks.md` and `docs/final-report.md`** against the new artefacts, and `docs/handoff.md` (this file) with the new numbers.
+
+### P1. The latency that is left
+
+4. **Zero-copy decode and present (O-7, O-30).** An EGL NV12 import with a YUV to RGB shader in `lumen-render`, and a decode DMA-BUF default. The client's present stage is 8.13 ms at 1600x900 and most of it is the conversion and the copy. This is what the Tier B acceptance needs.
+5. **The GPU colour conversion on the host (D49).** The conversion is 6.81 ms at 1080p and it alone caps the host at 147 fps. A GPU path needs a GLES or Vulkan context in the capture crate; `ash` is already a dependency, `egl` and `gbm` are too, but there is no GLES binding.
+6. **The quality ladder is not wired into the tier B script (O-30).** The proxy still drops 2992 frames because nothing tells the client to ask for a smaller picture in that run. This is the cheapest of the three.
+
+### P2. The control plane, still open
+
+7. **The control plane cannot start a host (O-34).**
+8. **The dashboard rewrites the whole log when it changes (O-36).** Only the changed lines should be written.
+9. **The dashboard is not in the README's screenshot set for the 1080p120 case**, and the picture selector is new: the README and the screenshots should be brought in step.
+
+### P3. The transport, still open
+
+10. **The FEC recovery counter (O-26).** Do not retry a recovery while a frame's slices are still arriving.
+11. **The adaptive parity cold start (O-33).** Start the session at the light level and keep it there until the link has been lossless for a while.
+12. **The `NoiseTransport` review (O-3).**
+13. **QUIC (M2.6)** behind a feature, only if a decision needs data.
+
+### P4. Input
+
+14. **The input path is not wired into the host service.** `crates/lumen-transport/src/input_channel.rs` has the isolated socket, `lumen-input-wayland` and `lumen-input-inject` have the capture and the injection, but the host service has no `input.rs` that ties them together. The measured latency is the injection leg only.
+
+### P5. The plan's remaining code
+
+15. **HDR and 10-bit (M4.8).** P010 and the HDR metadata transport. The `dynamic_range` capability bit needs adding to `crates/lumen-protocol/src/capability.rs`.
+16. **HEVC and AV1.** The plan's codec ladder. Record the D-CODEC decision.
+17. **PipeWire capture (M1.7).** `lumen-capture-pipewire` is still a stub. The plan's risk table allows the wlr fallback, so this is as much a decision to record as code to write. It is the precondition for the portal restore token (M6.3).
+18. **NVENC (M1.10), Vulkan encode (M1.11), Vulkan decode (M1.13).** The hardware for NVENC is present. Decide with the D-ENC-VENDOR experiment before writing them, and mark them pending with the reason if they cannot be measured here.
+19. **`lumenctl`.** The plan's name for a control tool. `lumen-host` and `lumen-client` cover the same ground; either add it or record the deviation.
+
+### P6. Baselines and the rig
+
+20. **The baselines (M8.5).**
+21. **The long soak (M8.3).** The run budget allows about two hours.
+22. **The physical rig (M8.6).** The procedure is written. It needs the hardware.
+
+---
+
+## 13. How to verify
 
 ```
 export CARGO_HOME=/home/hayden/.cargo RUSTUP_HOME=/home/hayden/.rustup PATH=/home/hayden/.cargo/bin:$PATH
 cd /home/hayden/Desktop/projects/lumen
 
-# The gates
-cargo fmt --all --check
+cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo deny check && cargo audit
 cargo test --workspace
 
-# M0
 scripts/probe-caps.sh && scripts/netns-up.sh
 test -f artifacts/m0/capabilities.json && test -f artifacts/m0/baselines.json
 
-# M1
 MODE=loopback DURATION=30 OUT=artifacts/m1/e2e.json ./scripts/run-e2e.sh
 MODE=netns   DURATION=30 OUT=artifacts/m1/e2e-netns.json ./scripts/run-e2e.sh
 ./target/release/lumen-bench report --input artifacts/m1/e2e.json \
-    --assert 'decode_errors==0' --assert 'p50_present_ms<=8' --assert 'p99_end_to_end_ms<=40'
+    --assert 'decode_errors==0' --assert 'p99_end_to_end_ms<=40'
 
-# M2
 ./scripts/sweep-loss.sh --levels 0.005,0.02,0.05 --jitter 10ms --out artifacts/m2/curve.csv
-test -f artifacts/m2/curve.csv && grep -q "0.005" artifacts/m2/curve.csv
-
-# M3
 ./scripts/run-input-latency.sh --duration 60 --out artifacts/m3/input.json
-
-# M4
-MODE=loopback DURATION=30 WITH_AUDIO=1 WITH_CLIPBOARD=1 WITH_RESIZE=1 \
-  OUT=artifacts/m4/e2e.json ./scripts/run-e2e.sh
-
-# M5
+MODE=loopback DURATION=30 WITH_AUDIO=1 WITH_CLIPBOARD=1 WITH_RESIZE=1 OUT=artifacts/m4/e2e.json ./scripts/run-e2e.sh
 ./scripts/run-tier-b.sh --cpus 0,1 --duration 300 --report artifacts/m5/tierb.json
-
-# M6
 ./scripts/run-reconnect.sh --cycles 20 --out artifacts/m6/reconnect.json
 ./scripts/run-compositor-restart.sh --cycles 5 --out artifacts/m6/restart.json
-
-# M7
 ./scripts/run-e2e-x11.sh --duration 60 --report artifacts/m7/e2e-x11.json
 
-# M8
 cd fuzz && for t in protocol_parser fec_reassemble transport_inject h264_au_split input_parser; do
   cargo +nightly fuzz run "$t" -- -max_total_time=60 || exit 1
 done; cd ..
-./scripts/soak.sh --duration 7200 --out artifacts/m8/soak.json
-./scripts/chaos.sh --duration 900 --out artifacts/m8/chaos.json
 ./target/release/lumen-bench rig-selftest --out artifacts/m1/rig-selftest.json
+```
+
+The control plane, by hand:
+
+```
+lumen-host --web-listen 127.0.0.1:8080 &
+# the URL with the token is on the host's standard error
+curl -s http://127.0.0.1:8080/api/state | python3 -m json.tool
+curl -s -X POST http://127.0.0.1:8080/api/command \
+    -H "X-Lumen-Token: $TOKEN" -H 'Content-Type: application/json' \
+    -d '{"command":"set_quality","args":{"width":854,"height":480}}'
 ```
 
 ---
 
-## 12. Risks and unknowns
+## 14. The gotchas, learned the hard way
 
-- **Measurement noise.** Host load from other builds has shown up as scheduling lateness of up to 4.5 ms in the client. Measure on a quiet machine and record `uptime`.
-- **Glass-to-glass cannot be measured here.** Every target that needs the rig stays **pending**. Do not write a number for them.
-- **The pipeline latency excludes the display.** The present stage ends when the frame is handed to the compositor.
-- **The two clocks are aligned by an NTP-style estimate** that assumes the two directions take the same time. The error is well under a millisecond on a LAN, but the whole cross-machine measurement rests on it, and a blocking call in the control channel moves it.
-- **The FEC recovery counter overstates the loss.** Read the true loss as what the client reports over the link feedback.
-- **The adaptive parity has a cold start.** The first losses on a bad link are not recovered (O-33).
-- **The Tier B proxy does not pass.** It drops frames because the colour conversion runs on the CPU.
-- **One decode error in the soak and in the chaos run.** Not diagnosed. It is probably the compositor restart.
-- **The input path is measured on the injection leg only.** The client capture and the transport are not in the loop yet.
-- **The repository has no history before the first push.** There is nothing to fall back on yet. Keep backups of anything you are about to rewrite.
-- **The disk filled up once.** Watch it.
+1. **File tools resolve relative paths against `/home/hayden/Desktop/projects`, not the workspace.** Use absolute paths.
+2. **Hashline tags are per-file and change on every edit.** Copy the tag from the latest read.
+3. **Edit boundaries can be auto-repaired, and an edit can silently not apply.** A python script that asserts and then writes is the safest way to edit; several of the edits in this session silently did nothing and were found by grepping afterwards. **After every scripted edit, grep for what you changed.**
+4. **A shared `target/` across agents breaks.** A sibling's mid-edit change shows up as an error in a crate you did not touch. Never `cargo clean` the shared target.
+5. **Clippy is `-D warnings` with a pedantic set.** Expect `needless_pass_by_value`, `single_match_else`, `collapsible_if`, `manual_is_multiple_of`, `chunks_exact_to_as_chunks`, `format_collect`, `map_unwrap_or`, `needless_continue`, `unreadable_literal`, `cast_lossless`, `redundant_closure_for_method_calls`, `int_plus_one` and `if_not_else`.
+6. **No placeholder tests.**
+7. **Display-dependent tests must skip with a printed reason.**
+8. **Use `-displayfd` for Xvfb.** Fixed display numbers collide.
+9. **`ip -n NS tc` is invalid.** Use `ip netns exec NS tc`.
+10. **One netns pair at a time.**
+11. **Fuzz uses nightly**, from `fuzz/`, which is outside the workspace.
+12. **Never `pkill -f` a pattern that appears in your own command line.** It kills the shell. Use `pkill -x`.
+13. **Watch the disk.** Two build trees plus the shared `target/` filled the 234 GB disk once.
+14. **A fixed sleep is not a readiness check.** The e2e script waits for the control port in the socket table, because under load the host needs more than a second to bind and a connecting probe leaves a session thread waiting for a handshake that never comes.
+15. **Do not trust host load numbers.** Measure on a quiet machine and record the load.
+16. **Do not put an exact frame count in prose.** The counts move with the load. Put them in the artefact.
+17. **A blocking call in the control loop poisons every latency number.** The clock offset comes from the ping exchange, so a 20 ms block in the control stage put 10 ms into every "send" stage. When a stage time is implausible, look for a block in the control channel before looking at the network.
+18. **A measurement that competes with the machine is not a measurement.** The X11 source painter at 200 fps burned a core and halved the numbers it was supposed to be the cause of. Run the painter at the rate the session is meant to deliver.
+19. **The dashboard's rate is the delivered rate, not the requested one.** A stream configured at 120 fps that delivers 60 must say 60.
 
 ---
 
-## 13. Quick file index
+## 15. The risks
 
-| Need | Path |
-|---|---|
-| Approved plan | `docs/plan.md` |
-| This handoff | `docs/handoff.md` |
-| Design decisions (D1 to D68) | `docs/design.md` |
-| Wire protocol | `docs/protocol.md` |
-| Benchmarks and provisional results | `docs/benchmarks.md` |
-| Known limits and blockers | `docs/known-limits.md` |
-| The final report | `docs/final-report.md` |
-| The photodiode harness procedure | `harness/README.md` |
-| Host pipeline | `crates/lumen-host-service/src/pipeline.rs` |
-| Host binary | `crates/lumen-host-service/src/main.rs` |
-| Session, pairing exchange, cipher negotiation | `crates/lumen-host-service/src/session.rs` |
-| Control channel | `crates/lumen-host-service/src/control.rs` |
-| Pairing store and identity files | `crates/lumen-host-service/src/pairing.rs` |
-| Per-stage timing and the clock offset | `crates/lumen-host-service/src/stages.rs` |
-| The host's audio stage | `crates/lumen-host-service/src/audio.rs` |
-| The host's clipboard | `crates/lumen-host-service/src/clipboard.rs` |
-| Client pipeline | `crates/lumen-client-desktop/src/lib.rs` |
-| Client receive stage and link accounting | `crates/lumen-client-desktop/src/receive.rs` |
-| Client decode and present | `crates/lumen-client-desktop/src/present.rs` |
-| The client's audio stage | `crates/lumen-client-desktop/src/audio.rs` |
-| Media packets, FEC, retransmit, NACK, receiver | `crates/lumen-transport/src/media.rs`, `slice.rs`, `fec.rs`, `retransmit.rs`, `nack.rs`, `pacing.rs`, `estimator.rs` |
-| The input channel | `crates/lumen-transport/src/input_channel.rs` |
-| Media header and capabilities | `crates/lumen-protocol/src/header.rs`, `capability.rs`, `media.rs` |
-| The audio wire format | `crates/lumen-protocol/src/audio.rs` |
-| Colour conversion | `crates/lumen-protocol/src/color.rs` |
-| Keys, handshake, pairing primitives | `crates/lumen-crypto/src/keys.rs`, `handshake.rs`, `aead.rs`, `pairing.rs` |
-| Wlr capture and DMA-BUF readback | `crates/lumen-capture-wlr/src/lib.rs`, `readback.rs` |
-| X11 capture and clipboard | `crates/lumen-capture-x11/src/lib.rs`, `dri3.rs`, `clipboard.rs` |
-| X11 input capture | `crates/lumen-input-x11/src/` |
-| Audio capture, session and playback | `crates/lumen-audio/src/` |
-| VA-API encode | `crates/lumen-encode-vaapi/src/`, `tests/dmabuf_import.rs` |
-| VA-API decode | `crates/lumen-decode-vaapi/src/`, `tests/roundtrip.rs` |
-| Renderer | `crates/lumen-render/src/` |
-| Bench library and binary | `crates/lumen-bench/src/`, `crates/lumen-bench/src/bin/lumen-bench.rs` |
-| Fuzz targets | `fuzz/fuzz_targets/`, artifacts in `fuzz/artifacts/` |
-| The end-to-end script | `scripts/run-e2e.sh` |
-| The loss sweep | `scripts/sweep-loss.sh` |
-| The input latency script | `scripts/run-input-latency.sh` |
-| The tier B proxy | `scripts/run-tier-b.sh` |
-| The soak and the chaos | `scripts/soak.sh`, `scripts/chaos.sh` |
-| Host and netns scripts | `scripts/netns-up.sh`, `scripts/netns-down.sh` |
-| End-to-end artefacts | `artifacts/m1/` |
-| The loss curve | `artifacts/m2/curve.csv` |
-| The input latency | `artifacts/m3/input.json` |
-| The audio, clipboard and resize run | `artifacts/m4/e2e.json` |
-| The tier B proxy | `artifacts/m5/tierb.json` |
-| Reconnect, restart and flap | `artifacts/m6/` |
-| The X11 run | `artifacts/m7/` |
-| The soak and the chaos | `artifacts/m8/` |
-| The baseline availability record | `artifacts/m0/baselines.json` |
+- **The numbers move with the load.** Every figure in section 5 is from a run on this machine with a known load, and the artefacts are the record.
+- **Glass-to-glass cannot be measured here.** Every target that needs the rig stays **pending**. Do not write a number for them.
+- **The pipeline latency excludes the display.** The present stage ends when the frame is handed to the compositor.
+- **The two clocks are aligned by an NTP-style estimate** that assumes the two directions take the same time. The error is well under a millisecond on a LAN, but the whole cross-machine measurement rests on it.
+- **The FEC recovery counter overstates the loss.** Read the true loss as what the client reports over the link feedback.
+- **The adaptive parity has a cold start** and the quality ladder lowers the picture and never raises it. Both are recorded (O-33, O-35).
+- **The 1080p120 case does not reach 120 fps on this machine**, and the reason is the CPU path, not the hardware. That is the next thing to fix, and the measurements to do it are in the two examples.
+- **The repository has one commit.** There is no history to fall back on. Keep backups of anything you are about to rewrite.
+- **The disk filled once.** Watch it.

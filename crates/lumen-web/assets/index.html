@@ -658,8 +658,8 @@
     setText("uptime", fmtUptime(host.uptime_s));
 
     // tiles
-    const streamed = counters.streamed_s || 0;
-    const fps = streamed ? counters.frames_encoded / streamed : null;
+    // The rate the pipeline delivered, not the rate that was asked for.
+    const fps = counters.delivered_fps || null;
     setText("v-fps", int(fps) + " fps");
     setText("s-fps", counters.frames_encoded + " frames encoded");
 

@@ -73,6 +73,15 @@ pub struct StageRecorder {
     has_offset: bool,
     /// The number of frames whose timings were incomplete.
     incomplete_frames: u64,
+    /// The capture timestamp of the first frame of the session.
+    ///
+    /// It is kept even when the frame itself is pruned, because the span of
+    /// the session is what the rate is measured against.
+    first_capture_ts_us: Option<u64>,
+    /// The capture timestamp of the newest frame.
+    last_capture_ts_us: Option<u64>,
+    /// How many frames the session has had.
+    frames_seen: u64,
 }
 
 impl StageRecorder {
@@ -133,6 +142,13 @@ impl StageRecorder {
         entry.capture_ts_us = Some(capture_ts_us);
         entry.encode_start_ts_us = Some(encode_start_ts_us);
         entry.encode_end_ts_us = Some(encode_end_ts_us);
+        // The span of the session is measured from the first frame, and it
+        // is kept even when the frame is pruned.
+        self.frames_seen += 1;
+        if self.first_capture_ts_us.is_none() {
+            self.first_capture_ts_us = Some(capture_ts_us);
+        }
+        self.last_capture_ts_us = Some(capture_ts_us);
     }
 
     /// Record the host's send timestamp for a frame.
@@ -250,6 +266,20 @@ impl StageRecorder {
     #[must_use]
     pub fn incomplete_frames(&self) -> u64 {
         self.incomplete_frames
+    }
+
+    /// How long the session has been running, and how many frames it has had.
+    ///
+    /// The span runs from the first frame the session captured to the
+    /// newest, so the rate it gives is the rate the pipeline actually
+    /// delivered and not the rate that was asked for.
+    #[must_use]
+    pub fn session(&self) -> (u64, f64) {
+        let span = match (self.first_capture_ts_us, self.last_capture_ts_us) {
+            (Some(first), Some(last)) => last.saturating_sub(first),
+            _ => 0,
+        };
+        (self.frames_seen, span as f64 / 1_000_000.0)
     }
 }
 

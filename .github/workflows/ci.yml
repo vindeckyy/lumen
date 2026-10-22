@@ -45,6 +45,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: clippy
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            pkg-config \
+            libgbm-dev \
+            libpipewire-0.3-dev \
+            libopus-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev
       - name: Lint
         run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -57,8 +68,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: test
-      # System libraries the workspace links against. Everything else
-      # (libva, libei) is dlopen'ed at runtime and needs no build package.
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -67,7 +76,9 @@ jobs:
             pkg-config \
             libgbm-dev \
             libpipewire-0.3-dev \
-            libopus-dev
+            libopus-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev
       # Tests that need a display or a DRM node skip themselves with a
       # printed reason when the environment is absent, so a headless
       # runner is expected to pass.
@@ -85,6 +96,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: deny
+      # System libraries the workspace links against. Everything else
+      # (libva, libei) is dlopen'ed at runtime and needs no build package.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            pkg-config \
+            libgbm-dev \
+            libpipewire-0.3-dev \
+            libopus-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev
       - name: Install cargo-deny
         run: cargo +stable install cargo-deny --locked
       # Licence policy: permissive licences only, copyleft rejected.
@@ -101,6 +125,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: audit
+      # System libraries the workspace links against. Everything else
+      # (libva, libei) is dlopen'ed at runtime and needs no build package.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            pkg-config \
+            libgbm-dev \
+            libpipewire-0.3-dev \
+            libopus-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev
       - name: Install cargo-audit
         run: cargo +stable install cargo-audit --locked
       - name: Check for known vulnerabilities

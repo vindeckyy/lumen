@@ -186,12 +186,21 @@ impl HostView {
     /// going. The counters carry the frames, and the time they were
     /// streamed over is what the rate has to be measured against.
     fn streamed_for(&self) -> f64 {
-        let frames = self.counters.frames_encoded.load(Ordering::Relaxed);
-        let fps = self.settings.fps().max(1);
-        if frames == 0 {
-            return 0.0;
-        }
-        frames as f64 / f64::from(fps)
+        self.stages.lock().map_or(0.0, |stages| stages.session().1)
+    }
+
+    /// The frames the session has delivered, and the rate they came at.
+    fn delivered(&self) -> (u64, f64) {
+        let (frames, span) = self
+            .stages
+            .lock()
+            .map_or((0, 0.0), |stages| stages.session());
+        let rate = if span > 0.0 {
+            frames as f64 / span
+        } else {
+            0.0
+        };
+        (frames, rate)
     }
 
     /// The state of the host.
@@ -305,6 +314,9 @@ impl HostView {
                 "estimated_bytes_per_sec": stats.estimated_bytes_per_sec,
                 "duration_s": stats.duration_ms as f64 / 1000.0,
                 "streamed_s": self.streamed_for(),
+                // The rate the pipeline delivered, not the rate that was
+                // asked for.
+                "delivered_fps": self.delivered().1,
             },
             "latency": self.latency(),
             "history": self

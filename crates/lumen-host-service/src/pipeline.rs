@@ -1116,13 +1116,6 @@ fn to_nv12(
     quality: crate::settings::Quality,
 ) -> Result<(Vec<u8>, u32, u32), String> {
     let (width, height) = (frame.width, frame.height);
-    let bgrx = match &frame.buffer {
-        FrameBuffer::Cpu { data } => cpu_bgrx(data, frame.format)?,
-        FrameBuffer::Dmabuf(image) => {
-            let pixels = read_pixels(image, width, height).map_err(|e| e.to_string())?;
-            cpu_bgrx(&pixels, frame.format)?
-        }
-    };
     // The picture the client asked for. When it is the size of the capture,
     // the conversion is the plain one; when it is smaller, the conversion
     // scales, and a smaller picture costs less work than a big one. The
@@ -1130,20 +1123,37 @@ fn to_nv12(
     let target_w = quality.width.min(width);
     let target_h = quality.height.min(height);
     let mut nv12 = vec![0u8; PixelFormat::Nv12.frame_len(target_w, target_h)];
-    color::bgrx_to_nv12_scaled(&bgrx, width, height, target_w, target_h, &mut nv12)?;
+
+    // The capture is already in BGRX order, so the frame is borrowed and
+    // nothing is copied. Copying it would move eight megabytes a frame at
+    // 1080p, and the conversion that follows reads every one of them.
+    match &frame.buffer {
+        FrameBuffer::Cpu { data } => {
+            let bgrx = cpu_bgrx(data, frame.format)?;
+            color::bgrx_to_nv12_scaled(&bgrx, width, height, target_w, target_h, &mut nv12)?;
+        }
+        FrameBuffer::Dmabuf(image) => {
+            let pixels = read_pixels(image, width, height).map_err(|e| e.to_string())?;
+            let bgrx = cpu_bgrx(&pixels, frame.format)?;
+            color::bgrx_to_nv12_scaled(&bgrx, width, height, target_w, target_h, &mut nv12)?;
+        }
+    }
     Ok((nv12, target_w, target_h))
 }
 
 /// Normalise a captured buffer into BGRX order.
-fn cpu_bgrx(data: &[u8], format: PixelFormat) -> Result<Vec<u8>, String> {
+fn cpu_bgrx(data: &[u8], format: PixelFormat) -> Result<std::borrow::Cow<'_, [u8]>, String> {
     match format {
-        PixelFormat::Bgrx => Ok(data.to_vec()),
+        // The capture is already in BGRX order, so the frame is borrowed.
+        // Copying it would move eight megabytes a frame at 1080p, and the
+        // conversion that follows reads every one of them.
+        PixelFormat::Bgrx => Ok(std::borrow::Cow::Borrowed(data)),
         PixelFormat::Rgba => {
             let mut out = Vec::with_capacity(data.len());
             for px in data.as_chunks::<4>().0 {
                 out.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
             }
-            Ok(out)
+            Ok(std::borrow::Cow::Owned(out))
         }
         other => Err(format!("{other:?} is not a capture format")),
     }
