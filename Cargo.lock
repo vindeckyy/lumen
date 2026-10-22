@@ -1572,7 +1572,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "lumen-audio"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libspa",
  "lumen-protocol",
@@ -1585,7 +1585,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-bench"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "image",
  "lumen-protocol",
@@ -1595,7 +1595,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-capture-pipewire"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ashpd",
  "lumen-protocol",
@@ -1606,7 +1606,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-capture-wlr"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "drm-fourcc",
  "gbm",
@@ -1621,7 +1621,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-capture-x11"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "drm-fourcc",
  "gbm",
@@ -1633,7 +1633,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-client-desktop"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "evdev",
  "lumen-audio",
@@ -1657,7 +1657,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-client-gui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gtk4",
  "libadwaita",
@@ -1668,7 +1668,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-crypto"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aead 0.6.1",
  "aes-gcm 0.11.1",
@@ -1685,7 +1685,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-decode-vaapi"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "lumen-encode-vaapi",
  "lumen-ffi-va",
@@ -1694,21 +1694,21 @@ dependencies = [
 
 [[package]]
 name = "lumen-decode-vulkan"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "lumen-protocol",
 ]
 
 [[package]]
 name = "lumen-drm"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "lumen-encode-nvenc"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "lumen-decode-vaapi",
  "lumen-encode-vaapi",
@@ -1719,7 +1719,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-encode-vaapi"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "lumen-ffi-va",
  "lumen-protocol",
@@ -1727,14 +1727,14 @@ dependencies = [
 
 [[package]]
 name = "lumen-encode-vulkan"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "lumen-protocol",
 ]
 
 [[package]]
 name = "lumen-ffi-nvenc"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libloading 0.9.0",
  "thiserror",
@@ -1742,7 +1742,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-ffi-va"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bindgen 0.73.2",
  "libloading 0.9.0",
@@ -1754,7 +1754,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-host-service"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "lumen-audio",
  "lumen-capture-pipewire",
@@ -1780,7 +1780,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-input-inject"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ashpd",
  "evdev",
@@ -1799,7 +1799,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-input-wayland"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ashpd",
  "lumen-crypto",
@@ -1815,7 +1815,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-input-x11"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "lumen-protocol",
  "rustix 1.1.5",
@@ -1826,7 +1826,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bitflags",
  "crc32fast",
@@ -1836,7 +1836,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-render"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gbm",
  "lumen-protocol",
@@ -1848,7 +1848,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-transport"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libloading 0.9.0",
  "lumen-crypto",
@@ -1862,14 +1862,14 @@ dependencies = [
 
 [[package]]
 name = "lumen-update-check"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ed25519-dalek",
 ]
 
 [[package]]
 name = "lumen-web"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rand",
  "serde",
