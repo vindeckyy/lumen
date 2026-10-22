@@ -260,8 +260,8 @@ impl PresentStage {
                             );
                             // The progress of the stream goes into the
                             // event log, so a script can see that the
-                            // frames flow again.
-                            if presented.is_multiple_of(PROGRESS_EVERY) {
+                            // frames flow again, and a launcher sees the first one.
+                            if presented == 1 || presented.is_multiple_of(PROGRESS_EVERY) {
                                 let errors = self.counters.decode_errors.load(Ordering::Relaxed);
                                 self.events.write(
                                     "progress",

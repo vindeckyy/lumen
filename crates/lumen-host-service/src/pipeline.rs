@@ -108,6 +108,8 @@ pub struct HostConfig {
     pub fps: u32,
     /// Capture through `wl_shm` instead of DMA-BUF.
     pub prefer_cpu: bool,
+    /// Hold the `width`x`height` picture from the start: the client's ladder cannot move it.
+    pub hold_quality: bool,
     /// Encoder rate control.
     pub rate_control: RateControl,
     /// Which hardware encoder the host uses.
@@ -237,6 +239,7 @@ impl Default for HostConfig {
             height: 720,
             fps: 30,
             prefer_cpu: false,
+            hold_quality: false,
             rate_control: RateControl::default(),
             encoder: EncoderBackend::Vaapi,
             max_duration: None,
@@ -416,6 +419,7 @@ impl HostPipeline {
         let start = crate::settings::Quality::new(config.width, config.height, config.fps);
         settings.set_quality(start);
         settings.set_quality_ceiling(start);
+        settings.set_quality_held(config.hold_quality);
         Ok(Self {
             config,
             counters: Arc::new(Counters::default()),

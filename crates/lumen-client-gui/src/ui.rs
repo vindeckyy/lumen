@@ -980,7 +980,18 @@ fn apply(shared: &Shared, update: Update) {
         Update::PairingRequested(fingerprint) => ask_code(shared, &fingerprint),
         Update::Established => {
             close_pairing(shared);
-            show_streaming(shared);
+            show_streaming(shared, false);
+        }
+        // Sent with the first frame and then every 30 frames; only the first changes the page.
+        Update::Presenting => {
+            let waiting = shared
+                .borrow()
+                .active
+                .as_ref()
+                .is_some_and(|a| !a.streaming);
+            if waiting {
+                show_streaming(shared, true);
+            }
         }
         Update::Retrying(detail) => {
             if let Some(active) = shared.borrow_mut().active.as_mut() {
@@ -1127,20 +1138,31 @@ fn show_connecting(shared: &Shared, retry: Option<&str>) {
     set_buttons(active, vec![(label, "", leave_button(shared))]);
 }
 
-fn show_streaming(shared: &Shared) {
+/// The session is up. `presenting` is false until the first frame, which is what opens the
+/// stream window.
+fn show_streaming(shared: &Shared, presenting: bool) {
     let app = shared.borrow();
     let Some(active) = app.active.as_ref() else {
         return;
     };
     active.status.set_paintable(None::<&gtk::gdk::Paintable>);
     active.status.set_icon_name(Some("video-display-symbolic"));
-    active
-        .status
-        .set_title(&format!("Streaming {}", active.name));
-    active.status.set_description(Some(
-        "The host's screen is in its own window. Press F11 there for fullscreen, and close \
-         that window to end the session.",
-    ));
+    if presenting {
+        active
+            .status
+            .set_title(&format!("Streaming {}", active.name));
+        active.status.set_description(Some(
+            "The host's screen is in its own window. Press F11 there for fullscreen, and close \
+             that window to end the session.",
+        ));
+    } else {
+        active
+            .status
+            .set_title(&format!("Connected to {}", active.name));
+        active.status.set_description(Some(
+            "Waiting for the host's first picture. The stream window opens when it arrives.",
+        ));
+    }
     active.details.set_visible(false);
     set_buttons(
         active,
@@ -1148,8 +1170,8 @@ fn show_streaming(shared: &Shared) {
     );
     drop(app);
     if let Some(active) = shared.borrow_mut().active.as_mut() {
-        active.streaming = true;
-        active.streamed = true;
+        active.streaming = presenting;
+        active.streamed |= presenting;
         active.retrying = false;
         active.answered = false;
     }

@@ -27,6 +27,8 @@ pub enum Update {
     PairingRequested(String),
     /// The session is up: the stream window opens with the first frame.
     Established,
+    /// Frames are on screen, so the stream window exists.
+    Presenting,
     /// A connection failed or a session ended, and the client tries again.
     Retrying(Option<String>),
     /// The user closed the stream window.
@@ -108,6 +110,7 @@ pub fn parse_event(line: &str) -> Option<Update> {
         "connecting" => Some(Update::Connecting),
         "pairing-requested" => Some(Update::PairingRequested(event.detail.unwrap_or_default())),
         "established" => Some(Update::Established),
+        "progress" => Some(Update::Presenting),
         "connect-failed" | "session-ended" => Some(Update::Retrying(event.detail)),
         "closed" => Some(Update::Closed),
         "failed" => Some(Update::Failed(event.detail.unwrap_or_default())),
@@ -480,7 +483,10 @@ mod tests {
             parse_event(&line("failed", Some("x"))),
             Some(Update::Failed("x".into()))
         );
-        assert_eq!(parse_event(&line("progress", None)), None);
+        assert_eq!(
+            parse_event(&line("progress", None)),
+            Some(Update::Presenting)
+        );
         assert_eq!(parse_event("not json"), None);
     }
 

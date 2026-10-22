@@ -30,6 +30,7 @@ Options:
                            'none' turns it off. The host prints the URL
                            with the token the dashboard needs.
   --cpu                   Capture through wl_shm instead of DMA-BUF
+  --hold                  Hold the --size picture: the client cannot ask for a smaller one
   --duration <seconds>    Stop after this many seconds
   --report <path>         Write the run counters as JSON to this file
   --pairing-store <path>  Host identity and trusted clients (default ~/.local/state/lumen/pairing.json)
@@ -88,7 +89,12 @@ impl std::fmt::Display for ArgError {
 
 /// Parse the command line.
 fn parse(args: &[String]) -> Result<Args, ArgError> {
-    let mut config = HostConfig::default();
+    let mut config = HostConfig {
+        // `--capture` defaults to auto: an X11 session has no compositor to screencopy.
+        capture: lumen_host_service::backend::detect_display_server()
+            .unwrap_or(lumen_host_service::backend::DisplayServer::Wayland),
+        ..HostConfig::default()
+    };
     let mut list_outputs = false;
     let mut report = None;
     let mut pairing_store = default_state_dir().join("pairing.json");
@@ -189,6 +195,7 @@ fn parse(args: &[String]) -> Result<Args, ArgError> {
                 );
             }
             "--cpu" => config.prefer_cpu = true,
+            "--hold" => config.hold_quality = true,
             "--report" => report = Some(std::path::PathBuf::from(value("--report")?)),
             "--pairing-store" => {
                 pairing_store = std::path::PathBuf::from(value("--pairing-store")?);

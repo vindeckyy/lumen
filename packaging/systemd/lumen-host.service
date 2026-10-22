@@ -10,7 +10,8 @@ Type=simple
 # the defaults from docs/protocol.md: the control plane, the media the client
 # receives and the input the client sends.
 ExecStart=%h/.local/bin/lumen-host --control 0.0.0.0:24800 --web-listen 127.0.0.1:8080
-Restart=on-failure
+# The host exits cleanly when the last session ends; it comes back for the next client.
+Restart=always
 RestartSec=2
 # The capture needs the session's Wayland socket; the input path needs
 # /dev/uinput, which the udev rule in packaging/udev grants to the input group.
