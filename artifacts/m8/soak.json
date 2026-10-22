@@ -1,0 +1,266 @@
+{
+  "bitrate_kbps": 171.04042185448412,
+  "client_counters": {
+    "access_units": 4688,
+    "datagrams_received": 4825,
+    "decode_errors": 2,
+    "duration_ms": 269080,
+    "fec_recoveries": 0,
+    "frames_decoded": 4686,
+    "frames_presented": 4686,
+    "idr_requests": 2,
+    "nacks_sent": 0
+  },
+  "configuration": {
+    "capture": "wlroots-screencopy",
+    "client_binary_sha256_prefix": "8a8e49d7d1e969bd",
+    "codec": "h264-vaapi",
+    "fps": "30",
+    "host_binary_sha256_prefix": "73ffaedb02c5b066",
+    "mode": "netns",
+    "size": "1280x720",
+    "transport": "custom-udp+fec-gf256"
+  },
+  "counters": {
+    "decode_errors": 2,
+    "dropped_frames": 5,
+    "fec_recoveries": 0,
+    "frames_decoded": 4686,
+    "frames_presented": 4686,
+    "frames_sent": 4691,
+    "packets_lost": 3,
+    "packets_received": 4825,
+    "retransmits": 0
+  },
+  "errors": {
+    "capture_errors": 35,
+    "decode_errors": 2,
+    "encode_errors": 0,
+    "idr_requests": 2,
+    "keyframe_requests": 2,
+    "nacks_sent": 0
+  },
+  "event_counts": {
+    "compositor_restart": 3,
+    "resolution_change": 3,
+    "session_failed": 2,
+    "suspend_resume": 2
+  },
+  "event_cycles": 10,
+  "events": [
+    {
+      "at_utc": "2026-10-21T23:15:26+00:00",
+      "detail": "the host output mode becomes 1920x1080 and the host is restarted at that size",
+      "index": 1,
+      "kind": "resolution_change",
+      "notes": "the host was restarted at 1920x1080; the script restarted the pair",
+      "recovery_ms": 3113,
+      "restarted_by_the_script": true,
+      "session_survived": false
+    },
+    {
+      "at_utc": "2026-10-21T23:16:01+00:00",
+      "detail": "the host compositor is killed and started again after 3s",
+      "index": 2,
+      "kind": "compositor_restart",
+      "notes": "the host reopens its capture; the compositor has to come up on the same socket name; the script could not bring the pair back",
+      "recovery_ms": null,
+      "restarted_by_the_script": true,
+      "session_survived": false
+    },
+    {
+      "at_utc": "2026-10-21T23:16:23+00:00",
+      "detail": "the session of cycle 3 did not come up",
+      "index": 3,
+      "kind": "session_failed",
+      "notes": "the session could not be established",
+      "recovery_ms": null,
+      "restarted_by_the_script": true,
+      "session_survived": false
+    },
+    {
+      "at_utc": "2026-10-21T23:16:34+00:00",
+      "detail": "the host and the client are stopped with SIGSTOP for 3s and continued",
+      "index": 4,
+      "kind": "suspend_resume",
+      "notes": "the sockets stay open across the freeze; the session survived on its own",
+      "recovery_ms": null,
+      "restarted_by_the_script": false,
+      "session_survived": true
+    },
+    {
+      "at_utc": "2026-10-21T23:17:37+00:00",
+      "detail": "the host output mode becomes 1440x900 and the host is restarted at that size",
+      "index": 5,
+      "kind": "resolution_change",
+      "notes": "the host was restarted at 1440x900; the script restarted the pair",
+      "recovery_ms": 3113,
+      "restarted_by_the_script": true,
+      "session_survived": false
+    },
+    {
+      "at_utc": "2026-10-21T23:18:11+00:00",
+      "detail": "the host compositor is killed and started again after 3s",
+      "index": 6,
+      "kind": "compositor_restart",
+      "notes": "the host reopens its capture; the compositor has to come up on the same socket name; the script could not bring the pair back",
+      "recovery_ms": null,
+      "restarted_by_the_script": true,
+      "session_survived": false
+    },
+    {
+      "at_utc": "2026-10-21T23:18:34+00:00",
+      "detail": "the session of cycle 7 did not come up",
+      "index": 7,
+      "kind": "session_failed",
+      "notes": "the session could not be established",
+      "recovery_ms": null,
+      "restarted_by_the_script": true,
+      "session_survived": false
+    },
+    {
+      "at_utc": "2026-10-21T23:18:44+00:00",
+      "detail": "the host and the client are stopped with SIGSTOP for 3s and continued",
+      "index": 8,
+      "kind": "suspend_resume",
+      "notes": "the sockets stay open across the freeze; the session survived on its own",
+      "recovery_ms": null,
+      "restarted_by_the_script": false,
+      "session_survived": true
+    },
+    {
+      "at_utc": "2026-10-21T23:19:48+00:00",
+      "detail": "the host output mode becomes 1280x720 and the host is restarted at that size",
+      "index": 9,
+      "kind": "resolution_change",
+      "notes": "the host was restarted at 1280x720; the script restarted the pair",
+      "recovery_ms": 3107,
+      "restarted_by_the_script": true,
+      "session_survived": false
+    },
+    {
+      "at_utc": "2026-10-21T23:20:21+00:00",
+      "detail": "the host compositor is killed and started again after 3s",
+      "index": 10,
+      "kind": "compositor_restart",
+      "notes": "the host reopens its capture; the compositor has to come up on the same socket name; the script could not bring the pair back",
+      "recovery_ms": null,
+      "restarted_by_the_script": true,
+      "session_survived": false
+    }
+  ],
+  "host_counters": {
+    "bytes_sent": 6073624,
+    "capture_errors": 35,
+    "datagrams_sent": 4828,
+    "duration_ms": 284079,
+    "encode_errors": 0,
+    "frames_captured": 4695,
+    "frames_encoded": 4691,
+    "keyframe_requests": 2,
+    "retransmits": 0
+  },
+  "milestone": "M8.3",
+  "provisional": true,
+  "provisional_reason": "measured without the photodiode rig: these are software pipeline latencies, not glass-to-glass",
+  "soak": {
+    "client_reports": 19,
+    "complete_runs": 5,
+    "cycles": 5,
+    "duration_actual_s": 308,
+    "finished_at_utc": "2026-10-21T23:20:21Z",
+    "host_reports": 5,
+    "interval_s": 60,
+    "pending": {
+      "pending": true,
+      "plan_remainder_s": 258892,
+      "reason": "the soak was stopped when the run budget ran out; the remainder of the requested length and of the 72 h target is pending",
+      "requested_remainder_s": 0
+    },
+    "plan_remainder_s": 258892,
+    "plan_target_duration_s": 259200,
+    "plan_target_note": "the plan targets 72 h; the run budget allows about 2 h",
+    "requested_duration_s": 300,
+    "requested_remainder_s": 0,
+    "runs_without_a_client_report": 0,
+    "runs_without_a_host_report": 14,
+    "started_at_utc": "2026-10-21T23:15:13Z"
+  },
+  "stages": {
+    "capture": {
+      "count": 4691,
+      "max_us": 24396,
+      "mean_us": 12896,
+      "min_us": 3667,
+      "p50_us": 11469,
+      "p90_us": 18731,
+      "p99_us": 20197
+    },
+    "decode": {
+      "count": 4684,
+      "max_us": 13726,
+      "mean_us": 5561,
+      "min_us": 3022,
+      "p50_us": 5268,
+      "p90_us": 6845,
+      "p99_us": 7495
+    },
+    "encode": {
+      "count": 4691,
+      "max_us": 10843,
+      "mean_us": 5937,
+      "min_us": 2703,
+      "p50_us": 5899,
+      "p90_us": 9246,
+      "p99_us": 10024
+    },
+    "end_to_end": {
+      "count": 4684,
+      "max_us": 66424,
+      "mean_us": 35420,
+      "min_us": 15714,
+      "p50_us": 32905,
+      "p90_us": 48187,
+      "p99_us": 51767
+    },
+    "present": {
+      "count": 4684,
+      "max_us": 19806,
+      "mean_us": 8371,
+      "min_us": 4624,
+      "p50_us": 6979,
+      "p90_us": 11316,
+      "p99_us": 13655
+    },
+    "recv": {
+      "count": 4684,
+      "max_us": 7303,
+      "mean_us": 34,
+      "min_us": 7,
+      "p50_us": 27,
+      "p90_us": 50,
+      "p99_us": 56
+    },
+    "send": {
+      "count": 4674,
+      "max_us": 5243,
+      "mean_us": 2552,
+      "min_us": 0,
+      "p50_us": 2525,
+      "p90_us": 4577,
+      "p99_us": 5022
+    }
+  },
+  "survival": {
+    "events": 10,
+    "note": "the session does not survive an in-session compositor restart here: the restarted compositor does not always take the same Wayland socket name the host was told to use, so the host cannot reconnect. A supervised restart of the pair brings it back. The M6 restart run, which restarts the compositor in place, recovers 5 of 5, so the host does reopen its capture",
+    "recovery_ms": {
+      "count": 3,
+      "max": 3113,
+      "mean": 3111,
+      "min": 3107
+    },
+    "restarted_by_the_script": 8,
+    "survived": 2
+  }
+}

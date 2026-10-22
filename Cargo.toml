@@ -1,0 +1,136 @@
+[workspace]
+resolver = "2"
+exclude = ["vendor/opus", "fuzz"]
+members = [
+    "crates/lumen-ffi-va",
+    "crates/lumen-ffi-libei",
+    "crates/lumen-ffi-nvenc",
+    "crates/lumen-protocol",
+    "crates/lumen-transport",
+    "crates/lumen-crypto",
+    "crates/lumen-capture-pipewire",
+    "crates/lumen-capture-wlr",
+    "crates/lumen-capture-x11",
+    "crates/lumen-encode-vaapi",
+    "crates/lumen-encode-nvenc",
+    "crates/lumen-encode-vulkan",
+    "crates/lumen-decode-vaapi",
+    "crates/lumen-decode-vulkan",
+    "crates/lumen-render",
+    "crates/lumen-input-wayland",
+    "crates/lumen-input-x11",
+    "crates/lumen-input-inject",
+    "crates/lumen-audio",
+    "crates/lumen-host-service",
+    "crates/lumen-client-desktop",
+    "crates/lumen-bench",
+    "crates/lumen-web",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT OR Apache-2.0"
+repository = "https://example.invalid/lumen"
+authors = ["Lumen contributors"]
+
+[workspace.dependencies]
+lumen-ffi-va = { path = "crates/lumen-ffi-va" }
+lumen-ffi-libei = { path = "crates/lumen-ffi-libei" }
+lumen-ffi-nvenc = { path = "crates/lumen-ffi-nvenc" }
+lumen-protocol = { path = "crates/lumen-protocol" }
+lumen-transport = { path = "crates/lumen-transport" }
+lumen-crypto = { path = "crates/lumen-crypto" }
+lumen-capture-pipewire = { path = "crates/lumen-capture-pipewire" }
+lumen-capture-wlr = { path = "crates/lumen-capture-wlr" }
+lumen-capture-x11 = { path = "crates/lumen-capture-x11" }
+lumen-encode-vaapi = { path = "crates/lumen-encode-vaapi" }
+lumen-encode-nvenc = { path = "crates/lumen-encode-nvenc" }
+lumen-encode-vulkan = { path = "crates/lumen-encode-vulkan" }
+lumen-decode-vaapi = { path = "crates/lumen-decode-vaapi" }
+lumen-decode-vulkan = { path = "crates/lumen-decode-vulkan" }
+lumen-render = { path = "crates/lumen-render" }
+lumen-input-wayland = { path = "crates/lumen-input-wayland" }
+lumen-input-x11 = { path = "crates/lumen-input-x11" }
+lumen-input-inject = { path = "crates/lumen-input-inject" }
+lumen-audio = { path = "crates/lumen-audio" }
+lumen-host-service = { path = "crates/lumen-host-service" }
+lumen-client-desktop = { path = "crates/lumen-client-desktop" }
+lumen-bench = { path = "crates/lumen-bench" }
+lumen-web = { path = "crates/lumen-web" }
+
+# Third-party: permissive licences only. See docs/design.md for the audit.
+bytes = "1"
+zerocopy = { version = "0.8", features = ["derive"] }
+bitflags = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+postcard = { version = "1", features = ["use-std"] }
+rand = "0.10"
+rand_core = "0.10"
+snow = { version = "0.10", features = ["risky-raw-split"] }
+x25519-dalek = { version = "3", features = ["static_secrets"] }
+ed25519-dalek = "3"
+hkdf = "0.13"
+sha2 = "0.11"
+aes-gcm = "0.11"
+aead = "0.6"
+chacha20poly1305 = "0.11"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive"] }
+socket2 = { version = "0.6", features = ["all"] }
+libloading = "0.9"
+nix = { version = "0.31", features = ["ioctl", "fs", "poll"] }
+rustix = { version = "1", features = ["fs", "net", "mm", "time", "process", "shm", "event", "stdio", "termios"] }
+x11rb = { version = "0.14", features = ["shm", "damage", "dri3", "xfixes", "xinput", "xtest", "present", "randr", "allow-unsafe-code"] }
+xkbcommon = { version = "0.9", features = ["wayland", "x11"] }
+wayland-client = "0.31"
+wayland-backend = "0.3"
+wayland-protocols = { version = "0.32", features = ["client", "unstable", "staging"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+wayland-scanner = "0.31"
+ash = { version = "0.38", default-features = false, features = ["std", "loaded"] }
+gbm = "0.18"
+egl = "0.2"
+drm = "0.15"
+drm-fourcc = "2"
+image = { version = "0.25", default-features = false, features = ["png"] }
+crc32fast = "1"
+proptest = "1"
+libspa = "0.10"
+pipewire = "0.10"
+opus = "0.4"
+ashpd = "0.13"
+zbus = "6"
+reed-solomon-erasure = { version = "6", default-features = false, features = ["std"] }
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring", "log"] }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
+struct_excessive_bools = "allow"
+must_use_candidate = "allow"
+doc_markdown = "allow"
+items_after_statements = "allow"
+uninlined_format_args = "allow"
+
+[patch.crates-io]
+# System libopus instead of opusic-sys's bundled C build. See vendor/opus/Cargo.toml.
+opus = { path = "vendor/opus" }

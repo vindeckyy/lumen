@@ -1,0 +1,11 @@
+{
+  "datagrams_received": 2616,
+  "access_units": 872,
+  "frames_decoded": 872,
+  "frames_presented": 872,
+  "decode_errors": 0,
+  "nacks_sent": 0,
+  "idr_requests": 0,
+  "fec_recoveries": 0,
+  "duration_ms": 28003
+}

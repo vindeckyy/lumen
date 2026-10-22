@@ -1,0 +1,279 @@
+{
+  "bitrate_kbps": 305.27166971370724,
+  "chaos": {
+    "complete_runs": 9,
+    "cycles": 13,
+    "duration_actual_s": 320,
+    "finished_at_utc": "2026-10-21T22:10:12Z",
+    "interval_s": 45,
+    "pending": {
+      "pending": false,
+      "reason": "the run was stopped when the requested length was up; the rest of the chaos plan was not run"
+    },
+    "requested_duration_s": 300,
+    "requested_remainder_s": 0,
+    "runs_without_a_client_report": 0,
+    "runs_without_a_host_report": 13,
+    "seed": 20261021,
+    "started_at_utc": "2026-10-21T22:04:52Z"
+  },
+  "client_counters": {
+    "access_units": 10952,
+    "datagrams_received": 10952,
+    "decode_errors": 6,
+    "duration_ms": 352128,
+    "fec_recoveries": 0,
+    "frames_decoded": 10945,
+    "frames_presented": 10945,
+    "idr_requests": 6,
+    "nacks_sent": 0
+  },
+  "configuration": {
+    "capture": "wlroots-screencopy",
+    "client_binary_sha256_prefix": "862845f29444b908",
+    "codec": "h264-vaapi",
+    "fps": "30",
+    "host_binary_sha256_prefix": "b7cb979f08010052",
+    "mode": "netns",
+    "size": "1280x720",
+    "transport": "custom-udp+fec-gf256"
+  },
+  "counters": {
+    "decode_errors": 6,
+    "dropped_frames": 22,
+    "fec_recoveries": 0,
+    "frames_decoded": 10945,
+    "frames_presented": 10945,
+    "frames_sent": 10967,
+    "packets_lost": 15,
+    "packets_received": 10952,
+    "retransmits": 0
+  },
+  "errors": {
+    "capture_errors": 0,
+    "decode_errors": 6,
+    "encode_errors": 0,
+    "idr_requests": 6,
+    "keyframe_requests": 6,
+    "nacks_sent": 0
+  },
+  "event_counts": {
+    "cpu_throttle": 1,
+    "decoder_device_loss": 1,
+    "encoder_restart": 3,
+    "netem_jitter_reorder": 2,
+    "netem_loss": 2,
+    "netns_teardown": 3,
+    "session_failed": 1
+  },
+  "events": [
+    {
+      "at_utc": "2026-10-21T22:05:08+00:00",
+      "detail": "the client is pinned to CPU 6 with taskset for 10 s, because cpulimit is not installed",
+      "index": 1,
+      "kind": "cpu_throttle",
+      "recovery_ms": null,
+      "restarted_by_the_script": false,
+      "session_survived": true
+    },
+    {
+      "at_utc": "2026-10-21T22:05:44+00:00",
+      "detail": "the host process is killed and started again, which restarts the encoder",
+      "index": 2,
+      "kind": "encoder_restart",
+      "recovery_ms": 2099,
+      "restarted_by_the_script": true,
+      "session_survived": false
+    },
+    {
+      "at_utc": "2026-10-21T22:05:53+00:00",
+      "detail": "tc netem on both ends of the veth pair: netem loss 7.4% delay 0ms 1ms reorder 5% 50% limit 1000; NOT INJECTED: netem is not permitted on lumen-client/lumen-c",
+      "index": 3,
+      "kind": "netem_loss",
+      "recovery_ms": 2100,
+      "restarted_by_the_script": true,
+      "session_survived": false
+    },
+    {
+      "at_utc": "2026-10-21T22:06:01+00:00",
+      "detail": "the client is restarted with LUMEN_VA_DEVICE=/dev/dri/renderD255, so its decoder cannot be opened",
+      "index": 4,
+      "kind": "decoder_device_loss",
+      "recovery_ms": 2098,
+      "restarted_by_the_script": true,
+      "session_survived": false
+    },
+    {
+      "at_utc": "2026-10-21T22:06:09+00:00",
+      "detail": "tc netem on both ends of the veth pair: netem delay 20ms 1ms reorder 5% 50% limit 1000",
+      "index": 5,
+      "kind": "netem_jitter_reorder",
+      "recovery_ms": 2099,
+      "restarted_by_the_script": true,
+      "session_survived": false
+    },
+    {
+      "at_utc": "2026-10-21T22:06:20+00:00",
+      "detail": "the network namespace pair is torn down and built again",
+      "index": 6,
+      "kind": "netns_teardown",
+      "recovery_ms": 4370,
+      "restarted_by_the_script": true,
+      "session_survived": false
+    },
+    {
+      "at_utc": "2026-10-21T22:07:08+00:00",
+      "detail": "the host process is killed and started again, which restarts the encoder",
+      "index": 7,
+      "kind": "encoder_restart",
+      "recovery_ms": 2099,
+      "restarted_by_the_script": true,
+      "session_survived": false
+    },
+    {
+      "at_utc": "2026-10-21T22:07:16+00:00",
+      "detail": "tc netem on both ends of the veth pair: netem loss 7.0% delay 0ms 20ms reorder 10% 50% limit 1000; NOT INJECTED: netem is not permitted on lumen-client/lumen-c",
+      "index": 8,
+      "kind": "netem_loss",
+      "recovery_ms": 2100,
+      "restarted_by_the_script": true,
+      "session_survived": false
+    },
+    {
+      "at_utc": "2026-10-21T22:07:27+00:00",
+      "detail": "the network namespace pair is torn down and built again",
+      "index": 9,
+      "kind": "netns_teardown",
+      "recovery_ms": 4374,
+      "restarted_by_the_script": true,
+      "session_survived": false
+    },
+    {
+      "at_utc": "2026-10-21T22:08:13+00:00",
+      "detail": "tc netem on both ends of the veth pair: netem delay 20ms 5ms reorder 5% 50% limit 1000",
+      "index": 10,
+      "kind": "netem_jitter_reorder",
+      "recovery_ms": null,
+      "restarted_by_the_script": false,
+      "session_survived": true
+    },
+    {
+      "at_utc": "2026-10-21T22:09:02+00:00",
+      "detail": "the network namespace pair is torn down and built again",
+      "index": 11,
+      "kind": "netns_teardown",
+      "recovery_ms": 4370,
+      "restarted_by_the_script": true,
+      "session_survived": false
+    },
+    {
+      "at_utc": "2026-10-21T22:09:50+00:00",
+      "detail": "the host process is killed and started again, which restarts the encoder",
+      "index": 12,
+      "kind": "encoder_restart",
+      "recovery_ms": 2095,
+      "restarted_by_the_script": true,
+      "session_survived": false
+    },
+    {
+      "at_utc": "2026-10-21T22:10:12+00:00",
+      "detail": "the session did not come up before fault 13",
+      "index": 13,
+      "kind": "session_failed",
+      "recovery_ms": null,
+      "restarted_by_the_script": true,
+      "session_survived": false
+    }
+  ],
+  "host_counters": {
+    "bytes_sent": 13796486,
+    "capture_errors": 0,
+    "datagrams_sent": 10967,
+    "duration_ms": 361553,
+    "encode_errors": 0,
+    "frames_captured": 10980,
+    "frames_encoded": 10967,
+    "keyframe_requests": 6,
+    "retransmits": 0
+  },
+  "milestone": "M8.4",
+  "provisional": true,
+  "provisional_reason": "measured without the photodiode rig: these are software pipeline latencies, not glass-to-glass",
+  "stages": {
+    "capture": {
+      "count": 10967,
+      "max_us": 21224,
+      "mean_us": 8220,
+      "min_us": 7209,
+      "p50_us": 8161,
+      "p90_us": 8799,
+      "p99_us": 9884
+    },
+    "decode": {
+      "count": 10937,
+      "max_us": 12984,
+      "mean_us": 4086,
+      "min_us": 2626,
+      "p50_us": 4120,
+      "p90_us": 4441,
+      "p99_us": 4810
+    },
+    "encode": {
+      "count": 10967,
+      "max_us": 6982,
+      "mean_us": 4312,
+      "min_us": 2516,
+      "p50_us": 4566,
+      "p90_us": 5191,
+      "p99_us": 5427
+    },
+    "end_to_end": {
+      "count": 10937,
+      "max_us": 62025,
+      "mean_us": 34287,
+      "min_us": 28633,
+      "p50_us": 33977,
+      "p90_us": 36411,
+      "p99_us": 54120
+    },
+    "present": {
+      "count": 10937,
+      "max_us": 9577,
+      "mean_us": 4690,
+      "min_us": 4379,
+      "p50_us": 4591,
+      "p90_us": 4956,
+      "p99_us": 7318
+    },
+    "recv": {
+      "count": 10937,
+      "max_us": 986,
+      "mean_us": 29,
+      "min_us": 6,
+      "p50_us": 25,
+      "p90_us": 51,
+      "p99_us": 63
+    },
+    "send": {
+      "count": 10937,
+      "max_us": 39622,
+      "mean_us": 12887,
+      "min_us": 9995,
+      "p50_us": 12581,
+      "p90_us": 14652,
+      "p99_us": 32479
+    }
+  },
+  "survival": {
+    "events": 13,
+    "note": "the in-session recovery of M6.1 and M6.2 is not implemented, so a recovery here is the time to a supervised restart of the pair",
+    "recovery_ms": {
+      "count": 10,
+      "max": 4374,
+      "mean": 2780,
+      "min": 2095
+    },
+    "restarted_by_the_script": 11,
+    "survived": 2
+  }
+}

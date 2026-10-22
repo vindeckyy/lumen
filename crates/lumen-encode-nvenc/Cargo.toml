@@ -1,0 +1,17 @@
+[package]
+publish = false
+name = "lumen-encode-nvenc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "NVENC video encoder."
+
+[dependencies]
+lumen-protocol = { workspace = true }
+lumen-ffi-nvenc = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,24 @@
+[package]
+publish = false
+name = "lumen-capture-wlr"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Wayland capture through wlroots screencopy (DMA-BUF)."
+
+[dependencies]
+lumen-protocol = { workspace = true }
+lumen-ffi-va = { workspace = true }
+wayland-client = { workspace = true }
+wayland-protocols = { workspace = true }
+wayland-protocols-wlr = { workspace = true }
+drm-fourcc = { workspace = true }
+gbm = { workspace = true }
+thiserror = { workspace = true }
+rustix = { version = "1", features = ["fs", "time"] }
+
+[lints]
+workspace = true

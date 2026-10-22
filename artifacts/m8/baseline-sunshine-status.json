@@ -1,0 +1,39 @@
+{
+  "baseline": "sunshine + moonlight-qt",
+  "detection": {
+    "binary_names": [
+      "sunshine",
+      "moonlight",
+      "moonlight-qt"
+    ],
+    "commands_run": [
+      "command -v sunshine",
+      "command -v moonlight",
+      "command -v moonlight-qt",
+      "dpkg-query -W -f='${Version}' sunshine",
+      "dpkg-query -W -f='${Version}' moonlight-client",
+      "dpkg-query -W -f='${Version}' moonlight-common-c"
+    ],
+    "packages": [
+      "sunshine",
+      "moonlight-client",
+      "moonlight-common-c"
+    ],
+    "searched_paths": [
+      "/usr/bin/sunshine",
+      "/usr/local/bin/sunshine",
+      "/opt/sunshine",
+      "/usr/bin/moonlight",
+      "/usr/local/bin/moonlight",
+      "/opt/moonlight"
+    ]
+  },
+  "generated_at_utc": "2026-10-21T19:54:31+00:00",
+  "measured": false,
+  "missing": [
+    "sunshine",
+    "moonlight-qt"
+  ],
+  "reason": "the binary is not installed, so no session was run and no number was measured",
+  "status": "not available"
+}

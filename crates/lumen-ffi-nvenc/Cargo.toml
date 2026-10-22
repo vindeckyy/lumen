@@ -1,0 +1,16 @@
+[package]
+publish = false
+name = "lumen-ffi-nvenc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "FFI bindings for NVENC (libnvidia-encode.so.1)."
+
+[dependencies]
+libloading = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,16 @@
+[package]
+publish = false
+name = "lumen-capture-pipewire"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Wayland capture through xdg-desktop-portal and PipeWire."
+
+[dependencies]
+lumen-protocol = { workspace = true }
+
+[lints]
+workspace = true

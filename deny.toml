@@ -1,0 +1,64 @@
+# cargo-deny configuration. Lumen ships under MIT OR Apache-2.0, so every
+# dependency in the license set must be permissive. Copyleft is rejected.
+#
+# The policy is the plan's: MIT, Apache-2.0, the BSD family, ISC and the
+# Unicode licence. Everything not in the allow list is denied, so there is no
+# separate deny list; the removed `licenses.deny` key was redundant.
+[graph]
+all-features = true
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "Unlicense",
+    "BSL-1.0",
+    # The Unicode licence was renamed in 2022. `Unicode-3.0` is the current
+    # name of the `Unicode-DFS-2016` the plan names.
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.9
+exceptions = []
+
+[licenses.private]
+ignore = true
+
+[advisories]
+# The xdg-desktop-portal client (ashpd) depends on zbus 5, which in turn
+# depends on the zvariant crates. Those crates are no longer maintained
+# standalone: their functionality moved into zbus 6. No ashpd release uses
+# zbus 6 yet, so there is no upgrade path.
+#
+# These advisories say "unmaintained". They are not vulnerabilities, they
+# are not a licence problem, and the code they cover is the D-Bus wire
+# format, which is reached only through the portal. The justification is
+# recorded in docs/design.md.
+ignore = [
+    { id = "RUSTSEC-2026-0370", reason = "unmaintained zvariant, reached through ashpd; no upgrade path exists" },
+    { id = "RUSTSEC-2026-0371", reason = "unmaintained zbus_names, reached through ashpd; no upgrade path exists" },
+    { id = "RUSTSEC-2026-0372", reason = "unmaintained zvariant_derive, reached through ashpd; no upgrade path exists" },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+deny = [
+    { name = "openssl" },
+    { name = "openssl-sys" },
+]
+allow-wildcard-paths = true
+skip = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

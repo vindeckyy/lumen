@@ -1,0 +1,27 @@
+[package]
+publish = false
+name = "lumen-input-wayland"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Wayland client-side input capture."
+
+[dependencies]
+lumen-ffi-libei = { workspace = true }
+ashpd = { workspace = true, features = ["input_capture"] }
+tokio = { version = "1", features = ["rt"] }
+wayland-client = { workspace = true }
+wayland-protocols = { workspace = true }
+# Local, not workspace: the workspace entry also enables `x11`, which links libxkbcommon-x11.so.
+# That dev symlink is missing on this machine, and this crate needs only the Wayland side.
+xkbcommon = { version = "0.9", default-features = false, features = ["wayland"] }
+rustix = { workspace = true }
+lumen-protocol = { workspace = true }
+lumen-crypto = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

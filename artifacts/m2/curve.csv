@@ -1,0 +1,4 @@
+loss_rate,jitter_ms,frames_sent,frames_decoded,frames_presented,dropped_frames,decode_errors,fec_recoveries,retransmits,packets_lost,packets_received,bitrate_kbps
+0.005,10,308,301,300,10,2,28,0,4,416,379.705
+0.02,10,309,298,298,13,4,47,0,8,482,445.069
+0.05,10,308,288,287,23,4,97,0,34,644,613.504

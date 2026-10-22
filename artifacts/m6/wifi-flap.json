@@ -1,0 +1,31 @@
+{
+  "failed": 0,
+  "flaps": 3,
+  "limit_ms": 2000,
+  "max_reconnect_ms": 1057,
+  "pass": true,
+  "recovered": 3,
+  "samples": [
+    {
+      "flap": 1,
+      "reconnect_ms": 403,
+      "recovered": true,
+      "sessions_after": 2,
+      "sessions_before": 0
+    },
+    {
+      "flap": 2,
+      "reconnect_ms": 292,
+      "recovered": true,
+      "sessions_after": 4,
+      "sessions_before": 3
+    },
+    {
+      "flap": 3,
+      "reconnect_ms": 1057,
+      "recovered": true,
+      "sessions_after": 5,
+      "sessions_before": 4
+    }
+  ]
+}

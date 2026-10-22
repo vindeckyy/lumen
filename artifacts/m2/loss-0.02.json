@@ -1,0 +1,108 @@
+{
+  "configuration": {
+    "capture": "wlroots-screencopy",
+    "client_access_units": "304",
+    "client_datagrams_received": "482",
+    "client_keyframe_requests": "4",
+    "client_nacks_sent": "0",
+    "codec": "h264-vaapi",
+    "duration_ms": "11080",
+    "duration_s": "12",
+    "fps": "30",
+    "host_bytes_sent": "616420",
+    "host_datagrams_sent": "490",
+    "host_frames_captured": "311",
+    "host_keyframe_requests": "4",
+    "jitter": "10ms",
+    "loss_percent": "2",
+    "loss_rate": "0.02",
+    "mode": "netns",
+    "netem": "loss 2% delay 10ms 10ms limit 1000",
+    "size": "1280x720",
+    "transport": "custom-udp+fec-gf256"
+  },
+  "counters": {
+    "frames_sent": 309,
+    "frames_decoded": 298,
+    "frames_presented": 298,
+    "dropped_frames": 13,
+    "decode_errors": 4,
+    "fec_recoveries": 47,
+    "retransmits": 0,
+    "packets_lost": 8,
+    "packets_received": 482,
+    "audio_packets": 0,
+    "audio_underruns": 0,
+    "clipboard_roundtrips": 0,
+    "resize_events": 1
+  },
+  "stages": {
+    "capture": {
+      "count": 309,
+      "p50_us": 9528,
+      "p90_us": 10241,
+      "p99_us": 12593,
+      "max_us": 18820,
+      "min_us": 7730,
+      "mean_us": 9527
+    },
+    "decode": {
+      "count": 297,
+      "p50_us": 3420,
+      "p90_us": 4274,
+      "p99_us": 5210,
+      "max_us": 11800,
+      "min_us": 2421,
+      "mean_us": 3513
+    },
+    "encode": {
+      "count": 309,
+      "p50_us": 2882,
+      "p90_us": 3525,
+      "p99_us": 3969,
+      "max_us": 6514,
+      "min_us": 2050,
+      "mean_us": 2940
+    },
+    "end_to_end": {
+      "count": 297,
+      "p50_us": 30610,
+      "p90_us": 40463,
+      "p99_us": 44828,
+      "max_us": 53505,
+      "min_us": 20391,
+      "mean_us": 31778
+    },
+    "present": {
+      "count": 297,
+      "p50_us": 3055,
+      "p90_us": 4452,
+      "p99_us": 7055,
+      "max_us": 7162,
+      "min_us": 2797,
+      "mean_us": 3393
+    },
+    "recv": {
+      "count": 297,
+      "p50_us": 42,
+      "p90_us": 52,
+      "p99_us": 74,
+      "max_us": 4335,
+      "min_us": 10,
+      "mean_us": 54
+    },
+    "send": {
+      "count": 297,
+      "p50_us": 11506,
+      "p90_us": 21030,
+      "p99_us": 24773,
+      "max_us": 25772,
+      "min_us": 1553,
+      "mean_us": 12309
+    }
+  },
+  "bitrate_kbps": 445.06859205776175,
+  "provisional": true,
+  "provisional_reason": "measured without the photodiode rig: these are software pipeline latencies, not glass-to-glass",
+  "queue_depth_max": 0
+}

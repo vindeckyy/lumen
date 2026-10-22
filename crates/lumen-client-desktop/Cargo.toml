@@ -1,0 +1,31 @@
+[package]
+publish = false
+name = "lumen-client-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Lumen desktop client."
+
+[dependencies]
+lumen-protocol = { workspace = true }
+lumen-transport = { workspace = true }
+lumen-crypto = { workspace = true }
+lumen-audio = { workspace = true }
+lumen-host-service = { workspace = true }
+lumen-decode-vaapi = { workspace = true }
+lumen-render = { workspace = true }
+rustix = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+wayland-client = { workspace = true }
+
+[[bin]]
+name = "lumen-client"
+path = "src/main.rs"
+
+[lints]
+workspace = true

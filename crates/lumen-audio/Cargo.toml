@@ -1,0 +1,24 @@
+[package]
+publish = false
+name = "lumen-audio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "PipeWire audio capture and Opus codec."
+
+[dependencies]
+serde = { workspace = true }
+libspa = { workspace = true }
+# v0_3_44 gates the TARGET_OBJECT key used to aim capture at the session sink.
+pipewire = { workspace = true, features = ["v0_3_44"] }
+opus = { workspace = true }
+tracing = { workspace = true }
+# The wire format of an audio frame: the header that precedes the payload.
+lumen-protocol = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

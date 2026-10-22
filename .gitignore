@@ -1,0 +1,8 @@
+# The build output. It is large and `cargo build` reproduces it.
+/target
+/fuzz/target
+
+# The run logs. They carry the public identity of a paired client and the
+# local paths of the machine that ran, and they are not the measurement
+# record: the JSON reports beside them are.
+/artifacts/**/*.log

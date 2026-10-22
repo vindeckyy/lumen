@@ -1,0 +1,17 @@
+[package]
+publish = false
+name = "lumen-encode-vaapi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "VA-API video encoder."
+
+[dependencies]
+lumen-protocol = { workspace = true }
+lumen-ffi-va = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,12 @@
+{
+  "xorg_dummy": {
+    "display": ":90",
+    "geometry": "1024x768",
+    "pid": 402024
+  },
+  "xvfb": {
+    "display": ":4",
+    "geometry": "1920x1080",
+    "pid": 402001
+  }
+}

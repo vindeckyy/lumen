@@ -1,0 +1,233 @@
+{
+  "baselines": {
+    "grd": {
+      "available": false,
+      "binary": null,
+      "binary_name": null,
+      "detection": {
+        "binary_names": [
+          "gnome-remote-desktop-daemon"
+        ],
+        "commands_run": [
+          "command -v gnome-remote-desktop-daemon",
+          "dpkg-query -W -f='${Version}' gnome-remote-desktop",
+          "ls baselines/*grd*.deb"
+        ],
+        "deb": null,
+        "package_versions": {
+          "gnome-remote-desktop": null
+        },
+        "packages": [
+          "gnome-remote-desktop"
+        ]
+      },
+      "licence": "GPL-2.0+",
+      "notes": "GPL-2.0+ host, RDP mode, measured against xfreerdp. Needs Mutter for the ScreenCast portal and VA-API or NVENC for the encoder.",
+      "reason": "no binary in PATH or in /usr/bin, /usr/local/bin, /opt or /snap/bin, no .deb in baselines/, and the package database has no entry for gnome-remote-desktop",
+      "role": "host",
+      "run_command": null,
+      "status": "not available",
+      "version": null,
+      "version_command": null,
+      "version_number": null,
+      "version_source": null
+    },
+    "moonlight_qt": {
+      "available": false,
+      "binary": null,
+      "binary_name": null,
+      "detection": {
+        "binary_names": [
+          "moonlight",
+          "moonlight-qt"
+        ],
+        "commands_run": [
+          "command -v moonlight",
+          "command -v moonlight-qt",
+          "dpkg-query -W -f='${Version}' moonlight-client",
+          "dpkg-query -W -f='${Version}' moonlight-common-c",
+          "ls baselines/*moonlight_qt*.deb"
+        ],
+        "deb": null,
+        "package_versions": {
+          "moonlight-client": null,
+          "moonlight-common-c": null
+        },
+        "packages": [
+          "moonlight-client",
+          "moonlight-common-c"
+        ]
+      },
+      "licence": "GPL-3.0",
+      "notes": "GPL-3.0 client. The upstream package needs moonlight-common-c, which carries the host certificate.",
+      "reason": "no binary in PATH or in /usr/bin, /usr/local/bin, /opt or /snap/bin, no .deb in baselines/, and the package database has no entry for moonlight-client, moonlight-common-c",
+      "role": "client",
+      "run_command": null,
+      "status": "not available",
+      "version": null,
+      "version_command": null,
+      "version_number": null,
+      "version_source": null
+    },
+    "rustdesk": {
+      "available": false,
+      "binary": null,
+      "binary_name": null,
+      "detection": {
+        "binary_names": [
+          "rustdesk"
+        ],
+        "commands_run": [
+          "command -v rustdesk",
+          "dpkg-query -W -f='${Version}' rustdesk",
+          "ls baselines/*rustdesk*.deb"
+        ],
+        "deb": null,
+        "package_versions": {
+          "rustdesk": null
+        },
+        "packages": [
+          "rustdesk"
+        ]
+      },
+      "licence": "AGPL-3.0",
+      "notes": "AGPL-3.0, both sides. Direct IP access works on a LAN without the server; the server is only needed for NAT traversal.",
+      "reason": "no binary in PATH or in /usr/bin, /usr/local/bin, /opt or /snap/bin, no .deb in baselines/, and the package database has no entry for rustdesk",
+      "role": "host+client",
+      "run_command": null,
+      "status": "not available",
+      "version": null,
+      "version_command": null,
+      "version_number": null,
+      "version_source": null
+    },
+    "rustdesk_server": {
+      "available": false,
+      "binary": null,
+      "binary_name": null,
+      "detection": {
+        "binary_names": [
+          "hbbs",
+          "rustdesk-server"
+        ],
+        "commands_run": [
+          "command -v hbbs",
+          "command -v rustdesk-server",
+          "dpkg-query -W -f='${Version}' rustdesk-server",
+          "ls baselines/*rustdesk_server*.deb"
+        ],
+        "deb": null,
+        "package_versions": {
+          "rustdesk-server": null
+        },
+        "packages": [
+          "rustdesk-server"
+        ]
+      },
+      "licence": "AGPL-3.0",
+      "notes": "AGPL-3.0 rendezvous and relay server. Optional for a LAN-only baseline: direct access does not need it.",
+      "reason": "no binary in PATH or in /usr/bin, /usr/local/bin, /opt or /snap/bin, no .deb in baselines/, and the package database has no entry for rustdesk-server",
+      "role": "server",
+      "run_command": null,
+      "status": "not available",
+      "version": null,
+      "version_command": null,
+      "version_number": null,
+      "version_source": null
+    },
+    "sunshine": {
+      "available": false,
+      "binary": null,
+      "binary_name": null,
+      "detection": {
+        "binary_names": [
+          "sunshine"
+        ],
+        "commands_run": [
+          "command -v sunshine",
+          "dpkg-query -W -f='${Version}' sunshine",
+          "ls baselines/*sunshine*.deb"
+        ],
+        "deb": null,
+        "package_versions": {
+          "sunshine": null
+        },
+        "packages": [
+          "sunshine"
+        ]
+      },
+      "licence": "GPL-3.0",
+      "notes": "GPL-3.0 host server; pairs with Moonlight-Qt. Needs a capture backend (KMS/wlr/X11/portal) and an encoder.",
+      "reason": "no binary in PATH or in /usr/bin, /usr/local/bin, /opt or /snap/bin, no .deb in baselines/, and the package database has no entry for sunshine",
+      "role": "host",
+      "run_command": null,
+      "status": "not available",
+      "version": null,
+      "version_command": null,
+      "version_number": null,
+      "version_source": null
+    },
+    "xfreerdp": {
+      "available": true,
+      "binary": "/usr/bin/xfreerdp",
+      "binary_name": "xfreerdp",
+      "detection": {
+        "binary_names": [
+          "xfreerdp",
+          "xfreerdp3"
+        ],
+        "commands_run": [
+          "command -v xfreerdp",
+          "dpkg-query -W -f='${Version}' freerdp3-x11",
+          "dpkg-query -W -f='${Version}' xfreerdp",
+          "ls baselines/*xfreerdp*.deb"
+        ],
+        "deb": null,
+        "package_versions": {
+          "freerdp3-x11": "3.32.1+dfsg-1",
+          "xfreerdp": null
+        },
+        "packages": [
+          "freerdp3-x11",
+          "xfreerdp"
+        ]
+      },
+      "licence": "Apache-2.0",
+      "notes": "RDP client used to drive the GRD baseline.",
+      "role": "rdp-client",
+      "run_command": "xfreerdp /v:<host-address> /u:<user> /p:<password>",
+      "status": "available",
+      "version": "This is FreeRDP version 3.32.1 (3.32.1)",
+      "version_command": "/usr/bin/xfreerdp --version",
+      "version_number": "3.32.1",
+      "version_source": "/usr/bin/xfreerdp --version"
+    }
+  },
+  "generated_at_utc": "2026-10-21T19:54:31+00:00",
+  "host": {
+    "arch": "x86_64",
+    "kernel": "7.3.0-9-generic",
+    "os": "Linux-7.3.0-9-generic-x86_64-with-glibc2.44"
+  },
+  "probe": {
+    "milestone": "M0.6",
+    "note": "Availability probe only. Nothing was run against a baseline and no latency was measured.",
+    "script": "scripts/baseline-check.sh"
+  },
+  "summary": {
+    "available": 1,
+    "available_names": [
+      "xfreerdp"
+    ],
+    "candidates": 6,
+    "measured": false,
+    "unavailable": 5,
+    "unavailable_names": [
+      "grd",
+      "moonlight_qt",
+      "rustdesk",
+      "rustdesk_server",
+      "sunshine"
+    ]
+  }
+}

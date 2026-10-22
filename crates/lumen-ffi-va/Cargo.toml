@@ -1,0 +1,23 @@
+[package]
+publish = false
+name = "lumen-ffi-va"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "FFI bindings for libva (VA-API)."
+
+[dependencies]
+libloading = { workspace = true }
+lumen-protocol = { workspace = true }
+thiserror = { workspace = true }
+nix = { version = "0.31", default-features = false, features = ["ioctl"] }
+rustix = { workspace = true }
+
+[build-dependencies]
+bindgen = "0.73"
+
+[lints]
+workspace = true

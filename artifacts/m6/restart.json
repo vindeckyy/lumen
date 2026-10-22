@@ -1,0 +1,49 @@
+{
+  "cycles": 5,
+  "failed": 0,
+  "open_fd_growth": 0,
+  "pass": true,
+  "recovered": 5,
+  "samples": [
+    {
+      "cycle": 1,
+      "frames_after": 120,
+      "frames_before": 90,
+      "open_fds_after": 12,
+      "open_fds_before": 12,
+      "recovered": true
+    },
+    {
+      "cycle": 2,
+      "frames_after": 150,
+      "frames_before": 120,
+      "open_fds_after": 12,
+      "open_fds_before": 12,
+      "recovered": true
+    },
+    {
+      "cycle": 3,
+      "frames_after": 180,
+      "frames_before": 150,
+      "open_fds_after": 12,
+      "open_fds_before": 12,
+      "recovered": true
+    },
+    {
+      "cycle": 4,
+      "frames_after": 210,
+      "frames_before": 180,
+      "open_fds_after": 12,
+      "open_fds_before": 12,
+      "recovered": true
+    },
+    {
+      "cycle": 5,
+      "frames_after": 240,
+      "frames_before": 210,
+      "open_fds_after": 12,
+      "open_fds_before": 12,
+      "recovered": true
+    }
+  ]
+}

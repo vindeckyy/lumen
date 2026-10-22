@@ -1,0 +1,27 @@
+{
+  "baseline": "rustdesk (both sides)",
+  "detection": {
+    "binary_names": [
+      "rustdesk"
+    ],
+    "commands_run": [
+      "command -v rustdesk",
+      "dpkg-query -W -f='${Version}' rustdesk"
+    ],
+    "packages": [
+      "rustdesk"
+    ],
+    "searched_paths": [
+      "/usr/bin/rustdesk",
+      "/usr/local/bin/rustdesk",
+      "/opt/rustdesk"
+    ]
+  },
+  "generated_at_utc": "2026-10-21T19:54:31+00:00",
+  "measured": false,
+  "missing": [
+    "rustdesk"
+  ],
+  "reason": "the binary is not installed, so no session was run and no number was measured",
+  "status": "not available"
+}

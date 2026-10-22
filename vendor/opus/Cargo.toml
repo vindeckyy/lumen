@@ -1,0 +1,27 @@
+# Vendored copy of opus 0.4.0 (MIT OR Apache-2.0, Tad Hardesty), patched in one
+# place: opusic-sys is taken with default-features = false, so its default
+# `bundled` feature (libopus C source built by cmake) is off and the system
+# libopus is linked instead. src/ is byte-identical to upstream.
+[package]
+edition = "2015"
+name = "opus"
+version = "0.4.0"
+authors = ["Tad Hardesty <tad@platymuus.com>"]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Safe Rust bindings for libopus"
+readme = "README.md"
+license = "MIT/Apache-2.0"
+repository = "https://github.com/SpaceManiac/opus-rs"
+
+[lib]
+name = "opus"
+path = "src/lib.rs"
+
+[dependencies.opusic-sys]
+version = "0.7.3"
+default-features = false

@@ -1,0 +1,34 @@
+[package]
+publish = false
+name = "lumen-host-service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Lumen host daemon."
+
+[dependencies]
+lumen-protocol = { workspace = true }
+lumen-transport = { workspace = true }
+lumen-crypto = { workspace = true }
+lumen-web = { workspace = true }
+lumen-audio = { workspace = true }
+lumen-capture-wlr = { workspace = true }
+lumen-capture-x11 = { workspace = true }
+lumen-encode-vaapi = { workspace = true }
+rustix = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+wayland-client = { workspace = true }
+wayland-protocols-wlr = { workspace = true }
+x11rb = { workspace = true }
+
+[[bin]]
+name = "lumen-host"
+path = "src/main.rs"
+
+[lints]
+workspace = true

@@ -1,0 +1,19 @@
+[package]
+publish = false
+name = "lumen-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Lumen wire protocol: headers, capabilities, media traits."
+
+[dependencies]
+bitflags = { workspace = true }
+thiserror = { workspace = true }
+crc32fast = { workspace = true }
+lumen-crypto = { workspace = true }
+
+[lints]
+workspace = true

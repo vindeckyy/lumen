@@ -1,0 +1,21 @@
+[package]
+publish = false
+name = "lumen-capture-x11"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "X11 host capture: DRI3, XShm, XDamage."
+
+[dependencies]
+lumen-protocol = { workspace = true }
+x11rb = { workspace = true }
+gbm = { workspace = true }
+drm-fourcc = { workspace = true }
+thiserror = { workspace = true }
+rustix = { version = "1", features = ["fs", "time"] }
+
+[lints]
+workspace = true

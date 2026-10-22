@@ -1,0 +1,23 @@
+[package]
+publish = false
+name = "lumen-input-inject"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Host-side input injection."
+
+[dependencies]
+lumen-input-wayland = { workspace = true }
+lumen-ffi-libei = { workspace = true }
+ashpd = { workspace = true, features = ["remote_desktop", "screencast"] }
+tokio = { version = "1", features = ["rt"] }
+evdev = "0.13"
+x11rb = { workspace = true }
+lumen-protocol = { workspace = true }
+lumen-crypto = { workspace = true }
+
+[lints]
+workspace = true

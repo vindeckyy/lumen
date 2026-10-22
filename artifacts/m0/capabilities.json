@@ -1,0 +1,159 @@
+{
+  "cores": 12,
+  "cpu": "AMD Ryzen 5 4600H with Radeon Graphics",
+  "dri_nodes": [
+    "by-path",
+    "card1",
+    "card2",
+    "renderD128",
+    "renderD129"
+  ],
+  "nvidia_nodes": [
+    "nvidia-caps",
+    "nvidia-modeset",
+    "nvidia-uvm",
+    "nvidia-uvm-tools",
+    "nvidia0",
+    "nvidiactl"
+  ],
+  "nvidia_smi": "NVIDIA GeForce GTX 1650, 580.178.04",
+  "os": "Linux 7.3.0-9-generic x86_64 GNU/Linux",
+  "pipewire": "pipewire\nCompiled with libpipewire 1.6.8\nLinked with libpipewire 1.6.8",
+  "pkg_config": {
+    "egl": "1.5",
+    "gbm": "26.2.4-1ubuntu1",
+    "libdrm": "2.4.134",
+    "libpipewire-0.3": "1.6.8",
+    "libva": "1.24.0",
+    "libva-drm": "1.24.0",
+    "libvulkan": "Package libvulkan was not found in the pkg-config search path.\nPerhaps you should add the directory containing `libvulkan.pc'\nto the PKG_CONFIG_PATH environment variable\nPackage 'libvulkan' not found",
+    "opus": "1.6.1",
+    "vulkan": "1.4.357",
+    "wayland-client": "1.26.0",
+    "xcb": "1.17.0",
+    "xkbcommon": "1.13.1"
+  },
+  "portal_backends": [
+    "xdg-desktop-portal",
+    "xdg-desktop-portal-gtk",
+    "xdg-desktop-portal-lxqt",
+    "xdg-desktop-portal-rewrite-launchers",
+    "xdg-desktop-portal-validate-icon",
+    "xdg-desktop-portal-validate-sound",
+    "xdg-desktop-portal-wlr"
+  ],
+  "va": {
+    "card1": {
+      "device": "/dev/dri/card1",
+      "driver": "nvidia",
+      "encoders": [],
+      "profiles": [
+        "VAProfileH264ConstrainedBaseline",
+        "VAProfileH264High",
+        "VAProfileH264Main",
+        "VAProfileHEVCMain",
+        "VAProfileHEVCMain10",
+        "VAProfileHEVCMain12",
+        "VAProfileHEVCMain444",
+        "VAProfileHEVCMain444_10",
+        "VAProfileHEVCMain444_12",
+        "VAProfileMPEG2Main",
+        "VAProfileMPEG2Simple",
+        "VAProfileVC1Advanced",
+        "VAProfileVC1Main",
+        "VAProfileVC1Simple",
+        "VAProfileVP8Version0_3",
+        "VAProfileVP9Profile0",
+        "VAProfileVP9Profile2"
+      ]
+    },
+    "card2": {
+      "device": "/dev/dri/card2",
+      "driver": "auto",
+      "encoders": [
+        "VAProfileH264ConstrainedBaseline",
+        "VAProfileH264High",
+        "VAProfileH264Main",
+        "VAProfileHEVCMain",
+        "VAProfileHEVCMain10"
+      ],
+      "profiles": [
+        "VAProfileH264ConstrainedBaseline",
+        "VAProfileH264High",
+        "VAProfileH264Main",
+        "VAProfileHEVCMain",
+        "VAProfileHEVCMain10",
+        "VAProfileJPEGBaseline",
+        "VAProfileMPEG2Main",
+        "VAProfileMPEG2Simple",
+        "VAProfileNone",
+        "VAProfileVC1Advanced",
+        "VAProfileVC1Main",
+        "VAProfileVC1Simple",
+        "VAProfileVP9Profile0",
+        "VAProfileVP9Profile2"
+      ]
+    },
+    "renderD128": {
+      "device": "/dev/dri/renderD128",
+      "driver": "nvidia",
+      "encoders": [],
+      "profiles": [
+        "VAProfileH264ConstrainedBaseline",
+        "VAProfileH264High",
+        "VAProfileH264Main",
+        "VAProfileHEVCMain",
+        "VAProfileHEVCMain10",
+        "VAProfileHEVCMain12",
+        "VAProfileHEVCMain444",
+        "VAProfileHEVCMain444_10",
+        "VAProfileHEVCMain444_12",
+        "VAProfileMPEG2Main",
+        "VAProfileMPEG2Simple",
+        "VAProfileVC1Advanced",
+        "VAProfileVC1Main",
+        "VAProfileVC1Simple",
+        "VAProfileVP8Version0_3",
+        "VAProfileVP9Profile0",
+        "VAProfileVP9Profile2"
+      ]
+    },
+    "renderD129": {
+      "device": "/dev/dri/renderD129",
+      "driver": "auto",
+      "encoders": [
+        "VAProfileH264ConstrainedBaseline",
+        "VAProfileH264High",
+        "VAProfileH264Main",
+        "VAProfileHEVCMain",
+        "VAProfileHEVCMain10"
+      ],
+      "profiles": [
+        "VAProfileH264ConstrainedBaseline",
+        "VAProfileH264High",
+        "VAProfileH264Main",
+        "VAProfileHEVCMain",
+        "VAProfileHEVCMain10",
+        "VAProfileJPEGBaseline",
+        "VAProfileMPEG2Main",
+        "VAProfileMPEG2Simple",
+        "VAProfileNone",
+        "VAProfileVC1Advanced",
+        "VAProfileVC1Main",
+        "VAProfileVC1Simple",
+        "VAProfileVP9Profile0",
+        "VAProfileVP9Profile2"
+      ]
+    }
+  },
+  "vulkan": {
+    "devices": [
+      "deviceName        = AMD Radeon Graphics (RADV RENOIR)",
+      "deviceName        = NVIDIA GeForce GTX 1650",
+      "deviceName        = llvmpipe (LLVM 22.1.8, 256 bits)"
+    ],
+    "version": "1.4.357",
+    "video_decode_ext": true,
+    "video_encode_ext": true
+  }
+}

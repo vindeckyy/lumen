@@ -1,0 +1,26 @@
+[package]
+publish = false
+name = "lumen-crypto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Lumen crypto: Noise handshake, key separation, AEAD."
+
+[dependencies]
+snow = { workspace = true }
+x25519-dalek = { workspace = true }
+ed25519-dalek = { workspace = true }
+hkdf = { workspace = true }
+sha2 = { workspace = true }
+aes-gcm = { workspace = true }
+aead = { workspace = true }
+chacha20poly1305 = { workspace = true }
+rand = { workspace = true }
+thiserror = { workspace = true }
+
+
+[lints]
+workspace = true

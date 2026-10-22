@@ -1,0 +1,23 @@
+[package]
+publish = false
+name = "lumen-render"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Client presentation path."
+
+[dependencies]
+lumen-protocol = { workspace = true }
+rustix = { workspace = true }
+wayland-client = { workspace = true }
+wayland-protocols = { workspace = true }
+x11rb = { workspace = true, features = ["composite"] }
+
+[dev-dependencies]
+gbm = { workspace = true }
+
+[lints]
+workspace = true

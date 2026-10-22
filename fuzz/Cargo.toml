@@ -1,0 +1,137 @@
+[package]
+name = "lumen-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "cargo-fuzz targets for Lumen parsers. Nightly only; excluded from the workspace."
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+lumen-protocol = { path = "../crates/lumen-protocol" }
+lumen-transport = { path = "../crates/lumen-transport" }
+lumen-crypto = { path = "../crates/lumen-crypto" }
+lumen-host-service = { path = "../crates/lumen-host-service" }
+lumen-audio = { path = "../crates/lumen-audio" }
+
+[[bin]]
+name = "protocol_input"
+path = "fuzz_targets/protocol_input.rs"
+test = false
+doc = false
+bench = false
+
+# Alias: the plan names this target "input_parser" (M8.1). It is the same
+# source as protocol_input; both names run.
+[[bin]]
+name = "input_parser"
+path = "fuzz_targets/protocol_input.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "protocol_header"
+path = "fuzz_targets/protocol_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "protocol_slice"
+path = "fuzz_targets/protocol_slice.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "protocol_capability"
+path = "fuzz_targets/protocol_capability.rs"
+test = false
+doc = false
+bench = false
+
+# Alias: the plan names this target "protocol_parser" (M8.1). It is the same
+# source as protocol_header; both names run. The other two protocol targets,
+# protocol_slice and protocol_capability, keep their own names.
+[[bin]]
+name = "protocol_parser"
+path = "fuzz_targets/protocol_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "transport_slice"
+path = "fuzz_targets/transport_slice.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "transport_fec"
+path = "fuzz_targets/transport_fec.rs"
+test = false
+doc = false
+bench = false
+
+# Alias: the plan names this target "fec_reassemble" (M8.1). It is the same
+# source as transport_fec; both names run.
+[[bin]]
+name = "fec_reassemble"
+path = "fuzz_targets/transport_fec.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "crypto_open"
+path = "fuzz_targets/crypto_open.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "crypto_pairing"
+path = "fuzz_targets/crypto_pairing.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "host_control"
+path = "fuzz_targets/host_control.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "transport_inject"
+path = "fuzz_targets/transport_inject.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "h264_au_split"
+path = "fuzz_targets/h264_au_split.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "opus_frame"
+path = "fuzz_targets/opus_frame.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+# Same vendored Opus as the main workspace: the system libopus instead of the
+# bundled C build. See vendor/opus/Cargo.toml.
+[patch.crates-io]
+opus = { path = "../vendor/opus" }

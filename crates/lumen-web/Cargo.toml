@@ -1,0 +1,18 @@
+[package]
+publish = false
+name = "lumen-web"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Lumen control plane: a dependency-free HTTP server and the dashboard it serves."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+rand = { workspace = true }
+
+[lints]
+workspace = true

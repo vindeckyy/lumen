@@ -1,0 +1,64 @@
+name: Fuzz
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Nightly run, off the hour to avoid the busiest slots.
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: fuzz-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The real target list from fuzz/Cargo.toml and fuzz/fuzz_targets/.
+        target:
+          - protocol_header
+          - protocol_slice
+          - protocol_capability
+          - protocol_input
+          - transport_slice
+          - transport_fec
+          - crypto_open
+          - crypto_pairing
+          - host_control
+    env:
+      # fuzz/ is excluded from the main workspace (exclude = ["vendor/opus",
+      # "fuzz"] in the root Cargo.toml) and has its own Cargo.lock. The
+      # root rust-toolchain.toml pins stable 1.99.1, so nightly has to be
+      # forced here for cargo-fuzz and for the cargo it spawns.
+      RUSTUP_TOOLCHAIN: nightly
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: fuzz-${{ matrix.target }}
+          workspaces: fuzz -> target
+      - name: Install cargo-fuzz
+        run: cargo +nightly install cargo-fuzz
+      - name: Fuzz ${{ matrix.target }}
+        working-directory: fuzz
+        run: cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=60
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/
+          if-no-files-found: ignore

@@ -1,0 +1,110 @@
+{
+  "cycles": 20,
+  "failed": 0,
+  "limit_ms": 2000,
+  "max_reconnect_ms": 5,
+  "pass": true,
+  "reconnected": 20,
+  "samples": [
+    {
+      "cycle": 1,
+      "established": true,
+      "reconnect_ms": 4
+    },
+    {
+      "cycle": 2,
+      "established": true,
+      "reconnect_ms": 3
+    },
+    {
+      "cycle": 3,
+      "established": true,
+      "reconnect_ms": 1
+    },
+    {
+      "cycle": 4,
+      "established": true,
+      "reconnect_ms": 4
+    },
+    {
+      "cycle": 5,
+      "established": true,
+      "reconnect_ms": 4
+    },
+    {
+      "cycle": 6,
+      "established": true,
+      "reconnect_ms": 1
+    },
+    {
+      "cycle": 7,
+      "established": true,
+      "reconnect_ms": 5
+    },
+    {
+      "cycle": 8,
+      "established": true,
+      "reconnect_ms": 4
+    },
+    {
+      "cycle": 9,
+      "established": true,
+      "reconnect_ms": 2
+    },
+    {
+      "cycle": 10,
+      "established": true,
+      "reconnect_ms": 3
+    },
+    {
+      "cycle": 11,
+      "established": true,
+      "reconnect_ms": 3
+    },
+    {
+      "cycle": 12,
+      "established": true,
+      "reconnect_ms": 2
+    },
+    {
+      "cycle": 13,
+      "established": true,
+      "reconnect_ms": 5
+    },
+    {
+      "cycle": 14,
+      "established": true,
+      "reconnect_ms": 3
+    },
+    {
+      "cycle": 15,
+      "established": true,
+      "reconnect_ms": 2
+    },
+    {
+      "cycle": 16,
+      "established": true,
+      "reconnect_ms": 5
+    },
+    {
+      "cycle": 17,
+      "established": true,
+      "reconnect_ms": 4
+    },
+    {
+      "cycle": 18,
+      "established": true,
+      "reconnect_ms": 1
+    },
+    {
+      "cycle": 19,
+      "established": true,
+      "reconnect_ms": 5
+    },
+    {
+      "cycle": 20,
+      "established": true,
+      "reconnect_ms": 5
+    }
+  ]
+}

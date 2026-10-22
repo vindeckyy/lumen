@@ -1,0 +1,185 @@
+{
+  "observations": [
+    {
+      "observed_frame_index": 0,
+      "observed_timestamp_us": 1000000,
+      "camera_ts_us": 1006000,
+      "trigger_ts_us": 1001000
+    },
+    {
+      "observed_frame_index": 1,
+      "observed_timestamp_us": 1016667,
+      "camera_ts_us": 1022667,
+      "trigger_ts_us": 1017667
+    },
+    {
+      "observed_frame_index": 2,
+      "observed_timestamp_us": 1033334,
+      "camera_ts_us": 1039334,
+      "trigger_ts_us": 1034334
+    },
+    {
+      "observed_frame_index": 3,
+      "observed_timestamp_us": 1050001,
+      "camera_ts_us": 1056001,
+      "trigger_ts_us": 1051001
+    },
+    {
+      "observed_frame_index": 4,
+      "observed_timestamp_us": 1066668,
+      "camera_ts_us": 1072668,
+      "trigger_ts_us": 1067668
+    },
+    {
+      "observed_frame_index": 5,
+      "observed_timestamp_us": 1083335,
+      "camera_ts_us": 1089335,
+      "trigger_ts_us": 1084335
+    },
+    {
+      "observed_frame_index": 6,
+      "observed_timestamp_us": 1100002,
+      "camera_ts_us": 1106002,
+      "trigger_ts_us": 1101002
+    },
+    {
+      "observed_frame_index": 7,
+      "observed_timestamp_us": 1116669,
+      "camera_ts_us": 1122669,
+      "trigger_ts_us": 1117669
+    },
+    {
+      "observed_frame_index": 8,
+      "observed_timestamp_us": 1133336,
+      "camera_ts_us": 1139336,
+      "trigger_ts_us": 1134336
+    },
+    {
+      "observed_frame_index": 9,
+      "observed_timestamp_us": 1150003,
+      "camera_ts_us": 1156003,
+      "trigger_ts_us": 1151003
+    },
+    {
+      "observed_frame_index": 10,
+      "observed_timestamp_us": 1166670,
+      "camera_ts_us": 1172670,
+      "trigger_ts_us": 1167670
+    },
+    {
+      "observed_frame_index": 11,
+      "observed_timestamp_us": 1183337,
+      "camera_ts_us": 1189337,
+      "trigger_ts_us": 1184337
+    },
+    {
+      "observed_frame_index": 12,
+      "observed_timestamp_us": 1200004,
+      "camera_ts_us": 1206004,
+      "trigger_ts_us": 1201004
+    },
+    {
+      "observed_frame_index": 13,
+      "observed_timestamp_us": 1216671,
+      "camera_ts_us": 1222671,
+      "trigger_ts_us": 1217671
+    },
+    {
+      "observed_frame_index": 14,
+      "observed_timestamp_us": 1233338,
+      "camera_ts_us": 1239338,
+      "trigger_ts_us": 1234338
+    },
+    {
+      "observed_frame_index": 15,
+      "observed_timestamp_us": 1250005,
+      "camera_ts_us": 1256005,
+      "trigger_ts_us": 1251005
+    },
+    {
+      "observed_frame_index": 16,
+      "observed_timestamp_us": 1266672,
+      "camera_ts_us": 1272672,
+      "trigger_ts_us": 1267672
+    },
+    {
+      "observed_frame_index": 17,
+      "observed_timestamp_us": 1283339,
+      "camera_ts_us": 1289339,
+      "trigger_ts_us": 1284339
+    },
+    {
+      "observed_frame_index": 18,
+      "observed_timestamp_us": 1300006,
+      "camera_ts_us": 1306006,
+      "trigger_ts_us": 1301006
+    },
+    {
+      "observed_frame_index": 19,
+      "observed_timestamp_us": 1316673,
+      "camera_ts_us": 1322673,
+      "trigger_ts_us": 1317673
+    },
+    {
+      "observed_frame_index": 20,
+      "observed_timestamp_us": 1333340,
+      "camera_ts_us": 1339340,
+      "trigger_ts_us": 1334340
+    },
+    {
+      "observed_frame_index": 21,
+      "observed_timestamp_us": 1350007,
+      "camera_ts_us": 1356007,
+      "trigger_ts_us": 1351007
+    },
+    {
+      "observed_frame_index": 22,
+      "observed_timestamp_us": 1366674,
+      "camera_ts_us": 1372674,
+      "trigger_ts_us": 1367674
+    },
+    {
+      "observed_frame_index": 23,
+      "observed_timestamp_us": 1383341,
+      "camera_ts_us": 1389341,
+      "trigger_ts_us": 1384341
+    },
+    {
+      "observed_frame_index": 24,
+      "observed_timestamp_us": 1400008,
+      "camera_ts_us": 1406008,
+      "trigger_ts_us": 1401008
+    },
+    {
+      "observed_frame_index": 25,
+      "observed_timestamp_us": 1416675,
+      "camera_ts_us": 1422675,
+      "trigger_ts_us": 1417675
+    },
+    {
+      "observed_frame_index": 26,
+      "observed_timestamp_us": 1433342,
+      "camera_ts_us": 1439342,
+      "trigger_ts_us": 1434342
+    },
+    {
+      "observed_frame_index": 27,
+      "observed_timestamp_us": 1450009,
+      "camera_ts_us": 1456009,
+      "trigger_ts_us": 1451009
+    },
+    {
+      "observed_frame_index": 28,
+      "observed_timestamp_us": 1466676,
+      "camera_ts_us": 1472676,
+      "trigger_ts_us": 1467676
+    },
+    {
+      "observed_frame_index": 29,
+      "observed_timestamp_us": 1483343,
+      "camera_ts_us": 1489343,
+      "trigger_ts_us": 1484343
+    }
+  ],
+  "glass_to_glass_us": 5000
+}
