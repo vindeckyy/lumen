@@ -42,6 +42,9 @@ pub enum DropReason {
     Codec(InputCodecError),
     /// It authenticated but was already seen, or is older than the replay window.
     Replay,
+    /// A gamepad action: this receiver drives an [`InputInjector`], which takes keys and the
+    /// pointer only. The host routes gamepads to [`crate::Gamepads`].
+    Gamepad,
 }
 
 /// Running counters for one receiver.
@@ -151,7 +154,9 @@ impl InputReceiver {
                 .highest_sequence
                 .map_or(envelope.sequence, |h| h.max(envelope.sequence)),
         );
-        let event = to_event(envelope.action, now_us());
+        let Some(event) = to_event(envelope.action, now_us()) else {
+            return Ok(Outcome::Dropped(DropReason::Gamepad));
+        };
         match injector.inject(&event) {
             Ok(()) => {
                 self.stats.injected += 1;
@@ -173,8 +178,9 @@ impl InputReceiver {
 }
 
 /// Maps a wire action back onto the local event model. Absolute motion keeps finite `x` and `y`,
-/// and relative motion uses NaN there, as documented on [`InputEventKind::Motion`].
-fn to_event(action: InputAction, received_us: u64) -> InputEvent {
+/// and relative motion uses NaN there, as documented on [`InputEventKind::Motion`]. Gamepad
+/// actions have no event here.
+fn to_event(action: InputAction, received_us: u64) -> Option<InputEvent> {
     let kind = match action {
         InputAction::Key { keycode, pressed } => InputEventKind::Key { keycode, pressed },
         InputAction::MotionRelative { dx, dy } => InputEventKind::Motion {
@@ -191,8 +197,12 @@ fn to_event(action: InputAction, received_us: u64) -> InputEvent {
         },
         InputAction::Button { button, pressed } => InputEventKind::Button { button, pressed },
         InputAction::Scroll { dx, dy } => InputEventKind::Scroll { dx, dy },
+        InputAction::Gamepad { .. }
+        | InputAction::GamepadRemoved { .. }
+        | InputAction::Touch { .. }
+        | InputAction::Pen { .. } => return None,
     };
-    InputEvent { kind, received_us }
+    Some(InputEvent { kind, received_us })
 }
 
 #[cfg(test)]
@@ -244,7 +254,7 @@ mod tests {
 
     #[test]
     fn wire_actions_map_to_local_events() {
-        let rel = to_event(InputAction::MotionRelative { dx: 2.0, dy: -1.0 }, 5);
+        let rel = to_event(InputAction::MotionRelative { dx: 2.0, dy: -1.0 }, 5).expect("an event");
         match rel.kind {
             InputEventKind::Motion { dx, dy, x, y } => {
                 assert_eq!((dx, dy), (2.0, -1.0));
@@ -254,7 +264,7 @@ mod tests {
         }
         assert_eq!(rel.received_us, 5);
 
-        let abs = to_event(InputAction::MotionAbsolute { x: 7.0, y: 8.0 }, 0);
+        let abs = to_event(InputAction::MotionAbsolute { x: 7.0, y: 8.0 }, 0).expect("an event");
         assert_eq!(
             abs.kind,
             InputEventKind::Motion {
@@ -264,6 +274,7 @@ mod tests {
                 y: 8.0
             }
         );
+        assert!(to_event(InputAction::GamepadRemoved { pad: 0 }, 0).is_none());
     }
 
     #[test]

@@ -135,6 +135,8 @@ pub struct HostSettings {
     /// Whether the operator holds the picture. A held picture does not follow the client's
     /// ladder: requests for another size are ignored and the client is told the held size.
     pub quality_held: AtomicBool,
+    /// The newest cursor shape of a capture that reports one, as the message the clients get.
+    pub cursor: Mutex<Option<crate::control::ControlMessage>>,
 }
 
 impl Default for HostSettings {
@@ -151,6 +153,7 @@ impl Default for HostSettings {
             quality: Mutex::new(Quality::new(1920, 1080, 30)),
             quality_ceiling: Mutex::new(Quality::new(1920, 1080, 30)),
             quality_held: AtomicBool::new(false),
+            cursor: Mutex::new(None),
         }
     }
 }

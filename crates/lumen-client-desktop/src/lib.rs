@@ -17,14 +17,19 @@ pub mod audio;
 pub mod backend;
 pub mod clipboard;
 pub mod events;
+mod gamepad;
+pub mod host_pin;
 pub mod input;
 pub mod ladder;
 pub mod lowpower;
 pub mod monitors;
 pub mod present;
-pub mod receive;
+mod receive;
 pub mod reconnect;
+mod recovery_gate;
+mod touch;
 
+use std::collections::HashMap;
 use std::io::Write;
 use std::net::{SocketAddr, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -88,13 +93,16 @@ pub struct ClientConfig {
     pub audio: bool,
     /// The audio stream parameters.
     pub audio_config: lumen_audio::AudioConfig,
+    /// The MAC address of a sleeping host to wake before the session starts.
+    pub wake: Option<lumen_transport::MacAddr>,
 }
 
 impl Default for ClientConfig {
     fn default() -> Self {
         Self {
             host: SocketAddr::from(([127, 0, 0, 1], DEFAULT_CONTROL_PORT)),
-            media_addr: SocketAddr::from(([0, 0, 0, 0], 0)),
+            // The host sends media to this fixed port of the control connection's address.
+            media_addr: SocketAddr::from(([0, 0, 0, 0], DEFAULT_MEDIA_PORT)),
             title: "Lumen".to_string(),
             backend: None,
             max_duration: None,
@@ -114,6 +122,7 @@ impl Default for ClientConfig {
                 bitrate_bps: 128_000,
                 use_opus: true,
             },
+            wake: None,
         }
     }
 }
@@ -136,6 +145,9 @@ pub enum ClientError {
     /// The decoder could not be created.
     #[error("decoder failed: {0}")]
     Decode(String),
+    /// The host is not the one this client paired with.
+    #[error("host pin failed: {0}")]
+    HostPin(String),
 }
 
 /// Counters the stages share.
@@ -151,6 +163,10 @@ pub(crate) struct Counters {
     idr_requests: AtomicU64,
     frames_rebuilt: AtomicU64,
     frames_dropped: AtomicU64,
+    /// How many times the quality ladder asked for another picture.
+    quality_steps: std::sync::atomic::AtomicU32,
+    /// The picture the client showed last, as width by height.
+    final_picture: Mutex<String>,
     duration_ms: AtomicU64,
     audio_played: AtomicU64,
     audio_dropped: AtomicU64,
@@ -198,7 +214,7 @@ pub struct ClientStats {
     pub decode_errors: u64,
     /// NACKs sent to the host.
     pub nacks_sent: u64,
-    /// On-demand keyframes requested from the host.
+    /// Recoveries requested from the host: a keyframe, or a recovery from the last good frame.
     pub idr_requests: u64,
     /// Access units rebuilt from FEC parity.
     pub frames_rebuilt: u64,
@@ -224,6 +240,11 @@ pub struct ClientStats {
     /// The playback scheduler's counters: scheduled, dropped late, dropped
     /// without a video clock, dropped without a clock offset.
     pub audio_playback: lumen_audio::PlaybackStats,
+    /// The picture the client settled on, as width by height. The quality
+    /// ladder moves it, so it says what the link carried.
+    pub final_picture: String,
+    /// How many times the quality ladder moved the picture.
+    pub quality_steps: u32,
     /// Access units dropped because the decode stage was busy.
     pub frames_dropped: u64,
     /// How long the client ran, in milliseconds.
@@ -265,6 +286,16 @@ impl ClientPipeline {
     /// session cannot be set up.
     pub fn run(&self) -> Result<ClientStats, ClientError> {
         let config = &self.config;
+        if let Some(mac) = config.wake {
+            // The host may be asleep: a magic packet wakes it before the connection.
+            let targets = lumen_transport::broadcast_targets(config.host);
+            match lumen_transport::wol::send(&mac, &targets) {
+                Ok(count) => {
+                    eprintln!("lumen-client: sent a wake-on-lan packet to {count} address(es)");
+                }
+                Err(e) => eprintln!("lumen-client: cannot send the wake-on-lan packet: {e}"),
+            }
+        }
         let counters = Arc::clone(&self.counters);
         let started = Instant::now();
         let deadline = config.max_duration.map(|d| started + d);
@@ -274,7 +305,11 @@ impl ClientPipeline {
 
         loop {
             match self.run_session(started, deadline, &events) {
-                Ok(()) => {
+                Ok(true) => {
+                    events.write("closed", None, None);
+                    break;
+                }
+                Ok(false) => {
                     if !config.reconnect {
                         break;
                     }
@@ -309,18 +344,22 @@ impl ClientPipeline {
             .duration_ms
             .store(started.elapsed().as_millis() as u64, Ordering::Relaxed);
         match failure {
-            Some(error) => Err(error),
+            Some(error) => {
+                events.write("failed", None, Some(error.to_string()));
+                Err(error)
+            }
             None => Ok(self.stats()),
         }
     }
 
-    /// Run one session, from the connect to the end of the stream.
+    /// Run one session, from the connect to the end of the stream. The answer is whether the
+    /// user closed the viewer window, which ends the client instead of reconnecting.
     fn run_session(
         &self,
         started: Instant,
         deadline: Option<Instant>,
         events: &EventLog,
-    ) -> Result<(), ClientError> {
+    ) -> Result<bool, ClientError> {
         let config = &self.config;
         let counters = Arc::clone(&self.counters);
 
@@ -337,23 +376,47 @@ impl ClientPipeline {
         let established = session::establish(&mut stream, Role::Initiator, client_capabilities())?;
         let mut channel = session::control_channel(stream, &established, Role::Initiator)?;
         let mut answer = |challenge: PairingChallenge| -> Option<PairingCode> {
+            // The detail is the host's fingerprint, which a launcher shows next to the code entry.
+            events.write(
+                "pairing-requested",
+                None,
+                Some(crate::host_pin::fingerprint(challenge.host_key)),
+            );
             answer_challenge(config, challenge)
         };
-        let (_version, _caps, _paired) = session::client_hello(
+        let hello = session::client_hello(
             &mut channel,
             &identity,
             &established.keys,
+            &established.binding,
             client_capabilities(),
             &mut answer,
         )?;
+        // The client pins the host it paired with: a different host is refused. The first pin
+        // needs a host that proved the code the user typed, or any host could claim to be it.
+        let pin_path = host_pin_path(&config.identity);
+        let mut pin = crate::host_pin::HostPin::load(&pin_path).map_err(ClientError::HostPin)?;
+        if pin == crate::host_pin::HostPin::None && !hello.pairing_confirmed {
+            return Err(ClientError::HostPin(format!(
+                "no host is pinned yet and the host {} did not prove a pairing code; \
+                 remove this client from the host's trusted clients and pair again",
+                crate::host_pin::fingerprint(hello.host_key)
+            )));
+        }
+        pin.check(&pin_path, hello.host_key)
+            .map_err(ClientError::HostPin)?;
         events.count_session();
         events.write("established", Some(connect_ms), None);
 
-        let backend = config.backend.unwrap_or_else(default_backend);
-        let renderer = Renderer::new(backend, &config.title).map_err(ClientError::Render)?;
+        let renderer = open_renderer(config.backend, &config.title)?;
+        let window_control = Arc::new(WindowControl::default());
         // Input is read from the window the renderer presents in, so its id is taken before the
         // renderer moves into the present stage.
-        let input_window = renderer.x11_window();
+        let input_window = match (renderer.x11_window(), renderer.wayland_connection()) {
+            (Some(window), _) => Some(input::Window::X11(window)),
+            (None, Some(conn)) => Some(input::Window::Wayland(conn)),
+            (None, None) => None,
+        };
 
         let running = Arc::new(AtomicBool::new(true));
         // The link accounting the host's estimator needs.
@@ -395,6 +458,8 @@ impl ClientPipeline {
                 plan: None,
                 consecutive_errors: 0,
                 converter: None,
+                boost: lumen_drm::I915Boost::open(),
+                window: Arc::clone(&window_control),
             };
             thread::spawn(move || stage.run())
         };
@@ -420,6 +485,11 @@ impl ClientPipeline {
 
         // Input leaves on its own socket, sealed with the client-to-host media key. The host
         // listens on the fixed input port of its address.
+        // The host's cursor shape, which the control stage receives and the input thread shows.
+        let cursor: input::CursorSlot = Arc::new(Mutex::new(None));
+        // What the host's game wants of the pad's motors, which the control stage receives and
+        // the gamepad thread plays.
+        let rumble: gamepad::RumbleSlot = Arc::new(Mutex::new(HashMap::new()));
         let input_handle = if config.input {
             let local = SocketAddr::new(config.media_addr.ip(), 0);
             let peer = SocketAddr::new(config.host.ip(), lumen_host_service::input::INPUT_PORT);
@@ -428,7 +498,20 @@ impl ClientPipeline {
                 established.keys.media_c2h,
                 established.keys.session_id,
             );
-            input::spawn(local, peer, cipher, Arc::clone(&running), input_window)
+            input_window.and_then(|window| {
+                input::spawn(
+                    local,
+                    peer,
+                    cipher,
+                    Arc::clone(&running),
+                    window,
+                    input::Shared {
+                        cursor: Arc::clone(&cursor),
+                        rumble: Arc::clone(&rumble),
+                        window: Arc::clone(&window_control),
+                    },
+                )
+            })
         } else {
             None
         };
@@ -443,6 +526,9 @@ impl ClientPipeline {
                 link: Arc::clone(&link),
                 clock_offset: Arc::clone(&clock_offset),
                 ladder: Arc::clone(&ladder),
+                cursor,
+                rumble,
+                window: Arc::clone(&window_control),
             };
             thread::spawn(move || stage.run())
         };
@@ -468,7 +554,7 @@ impl ClientPipeline {
         }
         drop(control_handle);
 
-        Ok(())
+        Ok(window_control.closed.load(Ordering::SeqCst))
     }
 }
 
@@ -479,9 +565,8 @@ impl ClientPipeline {
 /// the host writes, or from the terminal.
 fn answer_challenge(config: &ClientConfig, challenge: PairingChallenge) -> Option<PairingCode> {
     eprintln!(
-        "lumen-client: the host {} asks to pair. Its code is {}.",
-        hex_key(&challenge.host_key),
-        challenge.code
+        "lumen-client: the host {} asks to pair.",
+        hex_key(&challenge.host_key)
     );
     if let Some(value) = config.pairing_code {
         return Some(PairingCode::new(value));
@@ -629,12 +714,46 @@ fn client_capabilities() -> Capabilities {
 }
 
 /// Pick the display server from the environment.
-fn default_backend() -> RenderBackend {
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        RenderBackend::Wayland
-    } else {
-        RenderBackend::X11
+/// Opens the renderer of `backend`, or picks one when it is `None`.
+///
+/// The automatic choice is Wayland, unless the compositor does not draw window frames
+/// (GNOME has no `zxdg_decoration_manager_v1`) and an X server is there: a window without a
+/// title bar cannot be moved or closed, while the X server's window manager frames it.
+fn open_renderer(backend: Option<RenderBackend>, title: &str) -> Result<Renderer, ClientError> {
+    if let Some(backend) = backend {
+        return Renderer::new(backend, title).map_err(ClientError::Render);
     }
+    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        return Renderer::new(RenderBackend::X11, title).map_err(ClientError::Render);
+    }
+    let wayland = Renderer::new(RenderBackend::Wayland, title).map_err(ClientError::Render)?;
+    let framed = match &wayland {
+        Renderer::Wayland(r) => r.server_decorations(),
+        Renderer::X11(_) => true,
+    };
+    if !framed
+        && std::env::var_os("DISPLAY").is_some()
+        && let Ok(x11) = Renderer::new(RenderBackend::X11, title)
+    {
+        eprintln!(
+            "lumen-client: the Wayland compositor draws no window frames, so the window opens \
+             through X11; --present wayland keeps Wayland"
+        );
+        return Ok(x11);
+    }
+    Ok(wayland)
+}
+
+/// The viewer window's state that the threads of a session share.
+///
+/// The input thread asks for fullscreen (F11) and the present stage, which owns the window,
+/// applies it. The present stage records a close, which ends the session for good.
+#[derive(Debug, Default)]
+pub struct WindowControl {
+    /// The user closed the viewer window.
+    pub closed: AtomicBool,
+    /// The user wants the viewer window fullscreen.
+    pub fullscreen: AtomicBool,
 }
 
 /// The control stage.
@@ -649,6 +768,12 @@ struct ControlStage {
     clock_offset: Arc<Mutex<lumen_audio::ClockOffset>>,
     /// The quality ladder, shared with the present stage.
     ladder: Arc<Mutex<crate::ladder::Ladder>>,
+    /// The host's cursor shape, for the input thread.
+    cursor: input::CursorSlot,
+    /// What the host's game wants of the pad's motors, for the gamepad thread.
+    rumble: gamepad::RumbleSlot,
+    /// The viewer window: a close says goodbye to the host.
+    window: Arc<WindowControl>,
 }
 
 impl ControlStage {
@@ -669,8 +794,8 @@ impl ControlStage {
         let mut next_ping = Instant::now();
         let mut next_feedback = Instant::now();
         let mut last_rtt_us = 0u64;
-        // When the client sent its last ping, on the client clock.
-        let mut ping_sent_us = 0u64;
+        // The recent ping exchanges; the fastest one gives the clock offset.
+        let mut clock = lumen_audio::MinRttFilter::new();
         // The host pings every 500 ms. When the pings stop, the link is
         // gone: a network that drops the packets does not close the
         // connection, so the client has to notice the silence itself.
@@ -685,9 +810,8 @@ impl ControlStage {
             }
             if Instant::now() >= next_ping {
                 next_ping = Instant::now() + LINK_FEEDBACK_INTERVAL;
-                ping_sent_us = monotonic_us();
                 let _ = self.channel.send(&ControlMessage::Ping {
-                    ts_us: ping_sent_us,
+                    ts_us: monotonic_us(),
                 });
             }
             // The ladder decides whether the client needs a smaller
@@ -696,6 +820,7 @@ impl ControlStage {
             if let Some((width, height)) =
                 self.ladder.lock().ok().and_then(|mut ladder| ladder.step())
             {
+                self.counters.quality_steps.fetch_add(1, Ordering::Relaxed);
                 let _ = self.channel.send(&ControlMessage::Quality {
                     width,
                     height,
@@ -707,7 +832,7 @@ impl ControlStage {
                     ControlMessage::Nack { .. } => {
                         self.counters.nacks_sent.fetch_add(1, Ordering::Relaxed);
                     }
-                    ControlMessage::RequestIdr { .. } => {
+                    ControlMessage::RequestIdr { .. } | ControlMessage::Recover { .. } => {
                         self.counters.idr_requests.fetch_add(1, Ordering::Relaxed);
                     }
                     _ => {}
@@ -724,17 +849,12 @@ impl ControlStage {
                     // the offset between the two clocks.
                     let now = monotonic_us();
                     last_rtt_us = now.saturating_sub(ts_us);
-                    if ping_sent_us > 0 {
-                        // The offset is the client's clock minus the host's.
-                        // The client sent the ping, so the host's reply
-                        // timestamp is the host's clock at the moment the
-                        // ping was answered, and the midpoint of the client's
-                        // exchange is the client's clock at that moment.
-                        let midpoint = ping_sent_us / 2 + now / 2;
-                        let offset = midpoint.cast_signed() - reply_ts_us.cast_signed();
-                        if let Ok(mut shared) = self.clock_offset.lock() {
-                            *shared = lumen_audio::ClockOffset::new(offset);
-                        }
+                    // The filter measures the host's clock minus the client's
+                    // from the client's side of the exchange; the shared
+                    // offset is the client's clock minus the host's.
+                    let offset = -clock.push(ts_us, reply_ts_us, now);
+                    if let Ok(mut shared) = self.clock_offset.lock() {
+                        *shared = lumen_audio::ClockOffset::new(offset);
                     }
                 }
                 Ok(Some(ControlMessage::Ping { ts_us })) => {
@@ -810,6 +930,19 @@ impl ControlStage {
                             .fetch_add(1, Ordering::Relaxed);
                     }
                 }
+                Ok(Some(cursor @ ControlMessage::Cursor { .. })) => {
+                    if let Ok(mut slot) = self.cursor.lock() {
+                        *slot = Some(cursor);
+                    }
+                }
+                Ok(Some(ControlMessage::Rumble { pad, strong, weak })) => {
+                    let changed = self.rumble.lock().is_ok_and(|mut slot| {
+                        slot.insert(pad, (strong, weak)) != Some((strong, weak))
+                    });
+                    if changed {
+                        eprintln!("lumen-client: gamepad {pad} rumble {strong}/{weak}");
+                    }
+                }
                 Ok(Some(ControlMessage::Bye)) => break,
                 Ok(Some(_)) => {}
                 Ok(None) => {
@@ -839,12 +972,29 @@ impl ControlStage {
                 }
             }
         }
+        if self.window.closed.load(Ordering::SeqCst) {
+            // The user closed the window: the host ends the session now instead of waiting
+            // for the link to time out.
+            let _ = self.channel.send(&ControlMessage::Bye);
+        }
+        // The host is gone, so its game no longer drives the pad's motors: cut them.
+        if let Ok(mut slot) = self.rumble.lock() {
+            for pad in slot.values_mut() {
+                *pad = (0, 0);
+            }
+        }
         self.running.store(false, Ordering::SeqCst);
     }
 }
 
 /// Copy the counters into a plain snapshot.
 fn snapshot(counters: &Counters) -> ClientStats {
+    // The picture the client settled on, as the present stage saw it.
+    let final_picture = counters
+        .final_picture
+        .lock()
+        .map(|picture| picture.clone())
+        .unwrap_or_default();
     ClientStats {
         datagrams_received: counters.datagrams_received.load(Ordering::Relaxed),
         access_units: counters.access_units.load(Ordering::Relaxed),
@@ -875,5 +1025,14 @@ fn snapshot(counters: &Counters) -> ClientStats {
             .unwrap_or_default(),
         frames_dropped: counters.frames_dropped.load(Ordering::Relaxed),
         duration_ms: counters.duration_ms.load(Ordering::Relaxed),
+        final_picture,
+        quality_steps: counters.quality_steps.load(Ordering::Relaxed),
     }
+}
+
+/// Where the client keeps the host it is pinned to: next to its identity key.
+fn host_pin_path(identity: &std::path::Path) -> std::path::PathBuf {
+    let mut path = identity.as_os_str().to_os_string();
+    path.push(".host");
+    std::path::PathBuf::from(path)
 }

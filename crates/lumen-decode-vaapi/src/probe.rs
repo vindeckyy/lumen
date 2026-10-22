@@ -258,7 +258,8 @@ impl DecodeProbe {
     /// Returns a description when no VA-API device can be opened or the
     /// driver refuses the profile query.
     pub fn probe() -> Result<Self, String> {
-        let device = std::env::var("LUMEN_VA_DEVICE").unwrap_or_else(|_| "auto".to_string());
+        let device = lumen_ffi_va::knobs::va_device()
+            .map_or_else(|| "auto".to_string(), |path| path.display().to_string());
         Self::probe_device(&device)
     }
 

@@ -66,7 +66,7 @@ pub struct InputChannelStats {
 pub fn input_socket_options() -> crate::socket::SocketOptions {
     crate::socket::SocketOptions {
         priority: 6,
-        dscp: 46,
+        dscp: crate::socket::DSCP_AUDIO,
         recv_buffer: 256 * 1024,
     }
 }
@@ -90,8 +90,21 @@ impl InputSender {
     /// # Errors
     /// Returns the bind error of the operating system.
     pub fn bind(local: SocketAddr, peer: SocketAddr, cipher: PacketCipher) -> io::Result<Self> {
+        let socket = bind_socket(local)?;
+        // The traffic class is only marked toward a private peer, as on the media socket.
+        let dscp = if crate::socket::is_private_peer(&peer) {
+            input_socket_options().dscp
+        } else {
+            0
+        };
+        let view = socket2::SockRef::from(&socket);
+        if peer.is_ipv4() {
+            view.set_tos_v4(dscp << 2)?;
+        } else {
+            view.set_tclass_v6(dscp << 2)?;
+        }
         Ok(Self {
-            socket: bind_socket(local)?,
+            socket,
             peer,
             cipher,
             stats: InputChannelStats::default(),
@@ -367,11 +380,6 @@ fn bind_socket(addr: SocketAddr) -> io::Result<UdpSocket> {
     socket.set_reuse_address(true)?;
     socket.bind(&addr.into())?;
     socket.set_priority(options.priority)?;
-    if addr.is_ipv4() {
-        socket.set_tos_v4(options.dscp << 2)?;
-    } else {
-        socket.set_tclass_v6(options.dscp << 2)?;
-    }
     let _ = socket.set_recv_buffer_size(options.recv_buffer);
     let _ = socket.set_send_buffer_size(options.recv_buffer);
     Ok(socket.into())

@@ -188,13 +188,15 @@ impl MediaSender {
         }
 
         // The parity is computed over the padded block, because that is what
-        // the receiver rebuilds.
+        // the receiver rebuilds: a short last block is filled up to the block
+        // size with zero slices, which are never sent.
         if parity_per_block > 0 {
             for (block, block_slices) in slices.chunks(block_data * SLICE_MAX_PAYLOAD).enumerate() {
-                let padded: Vec<Vec<u8>> = block_slices
+                let mut padded: Vec<Vec<u8>> = block_slices
                     .chunks(SLICE_MAX_PAYLOAD)
                     .map(<[u8]>::to_vec)
                     .collect();
+                padded.resize(block_data, vec![0u8; SLICE_MAX_PAYLOAD]);
                 for (index, bytes) in compute_parity_with(&padded, parity_per_block)
                     .iter()
                     .enumerate()

@@ -11,6 +11,10 @@ description = "Wayland capture through xdg-desktop-portal and PipeWire."
 
 [dependencies]
 lumen-protocol = { workspace = true }
+ashpd = { workspace = true, features = ["screencast"] }
+pipewire = { workspace = true, features = ["v0_3_44"] }
+rustix = { workspace = true }
+tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
 
 [lints]
 workspace = true

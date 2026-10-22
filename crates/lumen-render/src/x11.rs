@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use lumen_protocol::media::{
-    DRM_FORMAT_MOD_INVALID, DRM_FORMAT_MOD_LINEAR, DmabufImage, FrameBuffer, FrameSink,
+    DRM_FORMAT_MOD_INVALID, DRM_FORMAT_MOD_LINEAR, DmabufImage, FrameBuffer, FrameSink, KeepAlive,
     PixelFormat, VideoFrame,
 };
 use x11rb::NONE;
@@ -24,8 +24,8 @@ use x11rb::protocol::dri3::ConnectionExt as _;
 use x11rb::protocol::present::{ConnectionExt as _, EventMask};
 use x11rb::protocol::shm::{self as x_shm, ConnectionExt as _};
 use x11rb::protocol::xproto::{
-    self, AtomEnum, ConnectionExt as _, CreateGCAux, CreateWindowAux, ImageFormat, PropMode,
-    WindowClass,
+    self, AtomEnum, ClientMessageEvent, ConnectionExt as _, CreateGCAux, CreateWindowAux,
+    EventMask as XEventMask, ImageFormat, PropMode, WindowClass,
 };
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
@@ -56,6 +56,10 @@ pub struct X11Renderer {
     last_present_ts_us: Option<u64>,
     /// The id of the current window, shared with readers on other threads (0 before the first).
     window_id: Arc<AtomicU32>,
+    /// The user asked to close the window.
+    close_requested: bool,
+    /// Whether the user wants the window fullscreen; kept across window recreation.
+    fullscreen: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -63,6 +67,10 @@ struct Atoms {
     net_wm_state: xproto::Atom,
     fullscreen: xproto::Atom,
     bypass_compositor: xproto::Atom,
+    wm_protocols: xproto::Atom,
+    wm_delete_window: xproto::Atom,
+    net_wm_name: xproto::Atom,
+    utf8_string: xproto::Atom,
 }
 
 struct Window {
@@ -72,7 +80,9 @@ struct Window {
     format: PixelFormat,
     slots: Vec<Slot>,
     /// DRI3 pixmaps for dmabuf frames, freed on `PresentIdleNotify`.
-    dmabuf_pixmaps: Vec<xproto::Pixmap>,
+    /// The dmabuf pixmaps the X server may still read, with the lease of the pool slot each one
+    /// aliases. The lease is dropped when the server reports the pixmap idle.
+    dmabuf_pixmaps: Vec<(xproto::Pixmap, Option<KeepAlive>)>,
     /// Whether the server accepted the composite unredirect request.
     unredirected: bool,
 }
@@ -136,6 +146,10 @@ impl X11Renderer {
             net_wm_state: intern(&conn, "_NET_WM_STATE")?,
             fullscreen: intern(&conn, "_NET_WM_STATE_FULLSCREEN")?,
             bypass_compositor: intern(&conn, "_NET_WM_BYPASS_COMPOSITOR")?,
+            wm_protocols: intern(&conn, "WM_PROTOCOLS")?,
+            wm_delete_window: intern(&conn, "WM_DELETE_WINDOW")?,
+            net_wm_name: intern(&conn, "_NET_WM_NAME")?,
+            utf8_string: intern(&conn, "UTF8_STRING")?,
         };
         let gc = conn
             .generate_id()
@@ -160,6 +174,8 @@ impl X11Renderer {
             present_count: 0,
             last_present_ts_us: None,
             window_id: Arc::new(AtomicU32::new(0)),
+            close_requested: false,
+            fullscreen: false,
         })
     }
 
@@ -200,6 +216,45 @@ impl X11Renderer {
         self.window.as_ref().is_some_and(|w| w.unredirected)
     }
 
+    /// Whether the user asked to close the window.
+    #[must_use]
+    pub fn close_requested(&self) -> bool {
+        self.close_requested
+    }
+
+    /// Makes the window fullscreen, or windowed again, through the window manager
+    /// (`_NET_WM_STATE`). The choice outlives a window that is recreated for a new picture size.
+    ///
+    /// # Errors
+    /// Returns a description when the request cannot be sent.
+    pub fn set_fullscreen(&mut self, fullscreen: bool) -> Result<(), String> {
+        if self.fullscreen == fullscreen {
+            return Ok(());
+        }
+        self.fullscreen = fullscreen;
+        let Some(window) = &self.window else {
+            return Ok(());
+        };
+        // EWMH: a mapped window asks the window manager with a client message to the root.
+        let event = ClientMessageEvent::new(
+            32,
+            window.id,
+            self.atoms.net_wm_state,
+            [u32::from(fullscreen), self.atoms.fullscreen, 0, 1, 0],
+        );
+        self.conn
+            .send_event(
+                false,
+                self.root,
+                XEventMask::SUBSTRUCTURE_REDIRECT | XEventMask::SUBSTRUCTURE_NOTIFY,
+                event,
+            )
+            .map_err(|e| format!("send _NET_WM_STATE: {e}"))?;
+        self.conn
+            .flush()
+            .map_err(|e| format!("flush X connection: {e}"))
+    }
+
     /// Handles queued server events without blocking.
     ///
     /// # Errors
@@ -224,15 +279,25 @@ impl X11Renderer {
                     if let Some(slot) = win.slots.iter_mut().find(|s| s.pixmap == Some(idle.pixmap))
                     {
                         slot.busy = false;
-                    } else if let Some(pos) =
-                        win.dmabuf_pixmaps.iter().position(|p| *p == idle.pixmap)
+                    } else if let Some(pos) = win
+                        .dmabuf_pixmaps
+                        .iter()
+                        .position(|(p, _)| *p == idle.pixmap)
                     {
-                        let pixmap = win.dmabuf_pixmaps.swap_remove(pos);
+                        // The lease of the pool slot goes with the pixmap: the server is done
+                        // reading the buffer, so the producer may write over it again.
+                        let (pixmap, _lease) = win.dmabuf_pixmaps.swap_remove(pos);
                         self.conn
                             .free_pixmap(pixmap)
                             .map_err(|e| format!("free pixmap: {e}"))?;
                     }
                 }
+            }
+            Event::ClientMessage(message)
+                if message.type_ == self.atoms.wm_protocols
+                    && message.data.as_data32()[0] == self.atoms.wm_delete_window =>
+            {
+                self.close_requested = true;
             }
             _ => {}
         }
@@ -419,7 +484,7 @@ impl X11Renderer {
         self.conn
             .flush()
             .map_err(|e| format!("flush X requests: {e}"))?;
-        win.dmabuf_pixmaps.push(pixmap);
+        win.dmabuf_pixmaps.push((pixmap, image.keepalive.clone()));
         Ok(())
     }
 
@@ -487,6 +552,36 @@ impl X11Renderer {
                 self.title.as_bytes(),
             )
             .map_err(|e| format!("set window title: {e}"))?;
+        self.conn
+            .change_property8(
+                PropMode::REPLACE,
+                id,
+                self.atoms.net_wm_name,
+                self.atoms.utf8_string,
+                self.title.as_bytes(),
+            )
+            .map_err(|e| format!("set window title: {e}"))?;
+        // WM_CLASS is the instance and the class, each ending in a NUL.
+        let class = format!("{0}\0{0}\0", crate::APP_ID);
+        self.conn
+            .change_property8(
+                PropMode::REPLACE,
+                id,
+                AtomEnum::WM_CLASS,
+                AtomEnum::STRING,
+                class.as_bytes(),
+            )
+            .map_err(|e| format!("set WM_CLASS: {e}"))?;
+        // The close button asks instead of killing the connection.
+        self.conn
+            .change_property32(
+                PropMode::REPLACE,
+                id,
+                self.atoms.wm_protocols,
+                AtomEnum::ATOM,
+                &[self.atoms.wm_delete_window],
+            )
+            .map_err(|e| format!("set WM_PROTOCOLS: {e}"))?;
         // Fixed size: min equals max, so the window stays at the frame size.
         let size = (i32::from(w), i32::from(h));
         WmSizeHints {
@@ -496,7 +591,7 @@ impl X11Renderer {
         }
         .set_normal_hints(&self.conn, id)
         .map_err(|e| format!("set size hints: {e}"))?;
-        let fullscreen = (w, h) == self.root_size;
+        let fullscreen = self.fullscreen || (w, h) == self.root_size;
         if fullscreen {
             // Ask the compositor not to composite this window (EWMH bypass hint) and mark it fullscreen.
             self.conn
@@ -604,7 +699,7 @@ impl X11Renderer {
                     .map_err(|e| format!("free pixmap: {e}"))?;
             }
         }
-        for pixmap in win.dmabuf_pixmaps {
+        for (pixmap, _lease) in win.dmabuf_pixmaps {
             self.conn
                 .free_pixmap(pixmap)
                 .map_err(|e| format!("free pixmap: {e}"))?;

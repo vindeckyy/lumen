@@ -1,0 +1,15 @@
+# udev rules for the Lumen host. Adapted from punktfunk's scripts/60-punktfunk.rules
+# (MIT OR Apache-2.0, Copyright (c) 2026 unom - Enrico Bühler).
+#
+# Gives the `input` group access to /dev/uinput (virtual keyboard, pointer, pen, touch and
+# gamepad devices) and /dev/uhid (virtual HID gamepads). `static_node` creates the nodes
+# before their modules load. `uaccess` also grants the user of the active seat.
+#
+# Both grants allow system-wide input injection: only add trusted users to `input`.
+#
+# Install:
+#   sudo install -m 0644 packaging/udev/60-lumen-input.rules /etc/udev/rules.d/
+#   sudo usermod -aG input "$USER"      # then log out and in again
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+KERNEL=="uinput", SUBSYSTEM=="misc", OPTIONS+="static_node=uinput", GROUP="input", MODE="0660", TAG+="uaccess"
+KERNEL=="uhid", SUBSYSTEM=="misc", OPTIONS+="static_node=uhid", GROUP="input", MODE="0660", TAG+="uaccess"

@@ -6,6 +6,7 @@
 //! NV12 and the stage converts it to BGRX before the compositor sees it. That copy is the
 //! deviation recorded as D37 and D46.
 
+use std::os::fd::AsFd;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
@@ -20,6 +21,9 @@ use lumen_render::Renderer;
 
 use crate::Counters;
 use crate::receive::{AccessUnit, monotonic_us};
+
+/// How long the client waits for the answer to a recovery request before it asks again.
+const RECOVERY_RETRY: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// How the stage presents DMA-BUF pictures. Chosen once, from the first one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,12 +115,40 @@ pub struct PresentStage {
     pub(crate) consecutive_errors: u32,
     /// The GPU converter of the `VppBgrx` plan.
     pub(crate) converter: Option<Converter>,
+    /// The i915 media-engine clock boost, on an Intel GPU.
+    pub(crate) boost: Option<lumen_drm::I915Boost>,
+    /// The state of the viewer window that other threads ask for.
+    pub(crate) window: Arc<crate::WindowControl>,
 }
 
 /// How many frames pass between two progress events.
 const PROGRESS_EVERY: u64 = 30;
 
+/// How long the present stage waits for a frame before it looks at the window again.
+const WINDOW_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+
 impl PresentStage {
+    /// Handles the window's events and the requests other threads made for it. Returns `false`
+    /// when the user closed the window, which ends the session.
+    fn serve_window(&mut self, fullscreen: &mut bool) -> bool {
+        if let Err(e) = self.renderer.poll_events() {
+            eprintln!("lumen-client: the window failed: {e}");
+        }
+        if self.renderer.close_requested() {
+            self.window.closed.store(true, Ordering::SeqCst);
+            self.running.store(false, Ordering::SeqCst);
+            return false;
+        }
+        let wanted = self.window.fullscreen.load(Ordering::Relaxed);
+        if wanted != *fullscreen {
+            *fullscreen = wanted;
+            if let Err(e) = self.renderer.set_fullscreen(wanted) {
+                eprintln!("lumen-client: cannot change the fullscreen state: {e}");
+            }
+        }
+        true
+    }
+
     /// Record that a frame was dropped, so the ladder can ask for a smaller
     /// picture when the client cannot keep up.
     fn record_dropped(&self) {
@@ -143,11 +175,24 @@ impl PresentStage {
         let mut last_recv_ts: Option<u64> = None;
         // Set when the decoder lost a reference picture. The client waits
         // for the next keyframe instead of decoding frames that cannot be
-        // decoded.
-        let mut needs_keyframe = false;
+        // decoded, and the last good picture stays on screen.
+        let mut gate = crate::recovery_gate::RecoveryGate::new();
+        // The newest frame that decoded: after a loss the host recovers from it.
+        let mut last_good: Option<u32> = None;
+        // When the client last asked to recover. The answer can be lost like any frame, and
+        // the gate refuses everything until it arrives, so the request is repeated.
+        let mut asked_at: Option<std::time::Instant> = None;
+        let mut fullscreen = false;
         while self.running.load(Ordering::SeqCst) {
-            let Ok(access_unit) = self.access_units.recv() else {
+            // The window is served between frames too, so a close or a fullscreen request is
+            // answered while the host sends nothing.
+            if !self.serve_window(&mut fullscreen) {
                 return;
+            }
+            let access_unit = match self.access_units.recv_timeout(WINDOW_POLL) {
+                Ok(access_unit) => access_unit,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
             };
             if let Some(previous) = last_recv_ts {
                 let delta = access_unit.recv_ts_us.saturating_sub(previous);
@@ -156,11 +201,18 @@ impl PresentStage {
                 interval_us = (interval_us * 7 + delta) / 8;
             }
             last_recv_ts = Some(access_unit.recv_ts_us);
-            if needs_keyframe && !access_unit.encoded.is_keyframe {
+            if !gate.accepts(access_unit.encoded.is_keyframe) {
                 // The decoder waits for a keyframe. Decoding a frame without
                 // its reference would only produce more errors.
                 self.counters.frames_dropped.fetch_add(1, Ordering::Relaxed);
                 self.record_dropped();
+                if asked_at.is_some_and(|at| at.elapsed() > RECOVERY_RETRY) {
+                    // The recovery did not arrive: ask for a keyframe, which needs nothing.
+                    let _ = self.requests.try_send(ControlMessage::RequestIdr {
+                        frame_id: access_unit.frame_id,
+                    });
+                    asked_at = Some(std::time::Instant::now());
+                }
                 continue;
             }
             let decode_start = monotonic_us();
@@ -168,7 +220,11 @@ impl PresentStage {
                 Ok(Some(frame)) => {
                     let decode_end = monotonic_us();
                     self.counters.frames_decoded.fetch_add(1, Ordering::Relaxed);
-                    needs_keyframe = false;
+                    gate.on_decoded(access_unit.encoded.is_keyframe);
+                    last_good = Some(access_unit.frame_id);
+                    if access_unit.encoded.is_keyframe {
+                        asked_at = None;
+                    }
                     // A frame that is already late is decoded, so the
                     // reference chain of the decoder stays intact, but it
                     // is not presented: presenting it would only add
@@ -180,6 +236,11 @@ impl PresentStage {
                         continue;
                     }
                     let from_dmabuf = matches!(frame.buffer, FrameBuffer::Dmabuf(_));
+                    if from_dmabuf {
+                        // On an Intel GPU the media engine drops to its floor clock unless
+                        // something waits on the buffer through i915, so the wait is done here.
+                        self.boost_clock(&frame);
+                    }
                     let result = if from_dmabuf {
                         self.present_dmabuf(&frame)
                     } else {
@@ -222,16 +283,36 @@ impl PresentStage {
                 Err(e) => {
                     self.counters.decode_errors.fetch_add(1, Ordering::Relaxed);
                     eprintln!("lumen-client: decode failed: {e}");
-                    // The reference picture is missing. Ask the host for a
-                    // keyframe so the next frame can be decoded, and wait
-                    // for it instead of decoding frames that cannot be
-                    // decoded.
-                    needs_keyframe = true;
-                    let _ = self.requests.try_send(ControlMessage::RequestIdr {
-                        frame_id: access_unit.frame_id,
-                    });
+                    // The reference picture is missing. The gate closes, the
+                    // last good picture stays on screen, and the host is
+                    // asked once to recover from the last frame that decoded,
+                    // or for a keyframe when none did.
+                    if gate.on_decode_error() {
+                        let request = match last_good {
+                            Some(last_good) => ControlMessage::Recover { last_good },
+                            None => ControlMessage::RequestIdr {
+                                frame_id: access_unit.frame_id,
+                            },
+                        };
+                        let _ = self.requests.try_send(request);
+                        asked_at = Some(std::time::Instant::now());
+                    }
                 }
             }
+        }
+    }
+
+    /// Waits on the decoded picture through i915, which keeps the media engine clocked.
+    fn boost_clock(&mut self, frame: &VideoFrame) {
+        let Some(boost) = self.boost.as_mut() else {
+            return;
+        };
+        let FrameBuffer::Dmabuf(image) = &frame.buffer else {
+            return;
+        };
+        if boost.track(image.fd.as_fd()) {
+            // A millisecond is enough: the wait raises the clock, it does not wait for work.
+            boost.wait(1_000_000);
         }
     }
 
@@ -392,6 +473,11 @@ impl PresentStage {
         if let Ok(mut ladder) = self.ladder.lock() {
             ladder.set_size(frame.width, frame.height);
             ladder.record_shown();
+            drop(ladder);
+            // The report says which picture the link carried.
+            if let Ok(mut picture) = self.counters.final_picture.lock() {
+                *picture = format!("{}x{}", frame.width, frame.height);
+            }
         }
         // The audio stage places its frames against the video clock, so it
         // needs to know which video frame is on screen.

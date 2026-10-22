@@ -1,8 +1,8 @@
 //! Annex-B H.264 parsing for the VA-API decode path.
 //!
 //! Supported: 4:2:0 8-bit progressive frames in Baseline, Main or High profile, no FMO, no
-//! scaling matrices, I and P slices with list 0 only. B, SP and SI slices, reference picture
-//! marking (MMCO), long-term references, list reordering, interlace and high bit depth are
+//! scaling matrices, I and P slices with list 0 only, with list 0 reordering, adaptive reference
+//! marking (MMCO) and long-term references. B, SP and SI slices, interlace and high bit depth are
 //! explicit errors, never guesses.
 
 use std::collections::HashMap;
@@ -113,6 +113,10 @@ pub struct Sps {
     pub delta_pic_order_always_zero: bool,
     /// `offset_for_top_to_bottom_field`.
     pub offset_for_top_to_bottom_field: i32,
+    /// `offset_for_non_ref_pic`, type 1 only.
+    pub offset_for_non_ref_pic: i32,
+    /// `offset_for_ref_frame[]`, type 1 only: one entry per frame of the order-count cycle.
+    pub offset_for_ref_frame: Vec<i32>,
     /// `gaps_in_frame_num_value_allowed_flag`.
     pub gaps_in_frame_num_allowed: bool,
     /// `direct_8x8_inference_flag`.
@@ -202,6 +206,48 @@ pub struct PredWeightTable {
     pub entries: Vec<RefWeight>,
 }
 
+/// One `memory_management_control_operation` of `dec_ref_pic_marking()` (7.4.3.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mmco {
+    /// 1: mark a short-term picture unused.
+    ShortTermUnused {
+        /// `difference_of_pic_nums_minus1`.
+        difference_of_pic_nums_minus1: u32,
+    },
+    /// 2: mark a long-term picture unused.
+    LongTermUnused {
+        /// `long_term_pic_num`.
+        long_term_pic_num: u32,
+    },
+    /// 3: turn a short-term picture into a long-term one.
+    ShortTermToLongTerm {
+        /// `difference_of_pic_nums_minus1`.
+        difference_of_pic_nums_minus1: u32,
+        /// `long_term_frame_idx`.
+        long_term_frame_idx: u32,
+    },
+    /// 4: set the largest long-term index; `None` means no long-term pictures.
+    MaxLongTermFrameIdx(Option<u32>),
+    /// 5: mark every reference unused and restart frame_num and order counts.
+    ClearAll,
+    /// 6: mark the current picture long-term.
+    CurrentToLongTerm {
+        /// `long_term_frame_idx`.
+        long_term_frame_idx: u32,
+    },
+}
+
+/// One `ref_pic_list_modification()` entry for list 0 (7.4.3.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListModification {
+    /// Idc 0: the short-term picture `abs_diff_pic_num_minus1 + 1` below the prediction.
+    Subtract(u32),
+    /// Idc 1: the short-term picture `abs_diff_pic_num_minus1 + 1` above the prediction.
+    Add(u32),
+    /// Idc 2: the long-term picture with this `long_term_pic_num`.
+    LongTerm(u32),
+}
+
 /// Header of one slice, with the fields the decoder and the VA-API slice parameter need.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SliceHeader {
@@ -225,6 +271,12 @@ pub struct SliceHeader {
     pub delta_pic_order_cnt: [i32; 2],
     /// `num_ref_idx_l0_active_minus1`, 0 for I slices.
     pub num_ref_idx_l0_active_minus1: u32,
+    /// List 0 modifications, in bitstream order; empty when the list keeps its initial order.
+    pub l0_modifications: Vec<ListModification>,
+    /// `long_term_reference_flag` of an IDR picture.
+    pub long_term_reference: bool,
+    /// `adaptive_ref_pic_marking_mode_flag` operations; `None` means sliding-window marking.
+    pub mmco: Option<Vec<Mmco>>,
     /// `pred_weight_table()` when the PPS sets `weighted_pred_flag` on a P slice.
     pub weights: Option<PredWeightTable>,
     /// `cabac_init_idc`, 0 when CAVLC or an I slice.
@@ -330,6 +382,7 @@ impl ParamSets {
         }
         let mut num_ref_idx_l0_active_minus1 = 0;
         let mut weights = None;
+        let mut l0_modifications = Vec::new();
         if kind == SliceKind::P {
             num_ref_idx_l0_active_minus1 = pps.num_ref_idx_l0_default_active_minus1;
             if r.flag()? {
@@ -341,7 +394,7 @@ impl ParamSets {
             }
             if r.flag()? {
                 // ref_pic_list_modification_flag_l0
-                return Err("reference picture list reordering is not supported");
+                l0_modifications = parse_list_modifications(&mut r, MAX_REF_IDX + 1)?;
             }
             if pps.weighted_pred {
                 weights = Some(parse_pred_weight_table(
@@ -351,15 +404,15 @@ impl ParamSets {
             }
         }
         let reference = nal.ref_idc != 0;
+        let mut long_term_reference = false;
+        let mut mmco = None;
         if reference {
             if idr {
                 // no_output_of_prior_pics_flag, then long_term_reference_flag.
                 r.skip(1)?;
-                if r.flag()? {
-                    return Err("long-term reference pictures are not supported");
-                }
+                long_term_reference = r.flag()?;
             } else if r.flag()? {
-                return Err("reference picture marking (MMCO) is not supported");
+                mmco = Some(parse_mmco(&mut r)?);
             }
         }
         let cabac_init_idc = if pps.entropy_coding_mode && kind == SliceKind::P {
@@ -391,6 +444,9 @@ impl ParamSets {
             delta_pic_order_cnt_bottom,
             delta_pic_order_cnt,
             num_ref_idx_l0_active_minus1,
+            l0_modifications,
+            long_term_reference,
+            mmco,
             weights,
             cabac_init_idc,
             slice_qp_delta,
@@ -464,6 +520,56 @@ fn same_picture(a: &SliceHeader, b: &SliceHeader) -> bool {
         && a.pic_order_cnt_lsb == b.pic_order_cnt_lsb
         && a.delta_pic_order_cnt_bottom == b.delta_pic_order_cnt_bottom
         && a.delta_pic_order_cnt == b.delta_pic_order_cnt
+}
+
+/// `ref_pic_list_modification()` entries until `modification_of_pic_nums_idc` 3, at most `limit`.
+fn parse_list_modifications(r: &mut Bits<'_>, limit: u32) -> Res<Vec<ListModification>> {
+    let mut out = Vec::new();
+    loop {
+        let entry = match r.ue()? {
+            0 => ListModification::Subtract(r.ue()?),
+            1 => ListModification::Add(r.ue()?),
+            2 => ListModification::LongTerm(r.ue()?),
+            3 => return Ok(out),
+            _ => return Err("modification_of_pic_nums_idc out of range"),
+        };
+        if out.len() as u32 >= limit {
+            return Err("too many reference list modifications");
+        }
+        out.push(entry);
+    }
+}
+
+/// The operations of `dec_ref_pic_marking()` until operation 0. At most 66 operations fit a
+/// conforming picture (one per reference plus the bounded ones); more is malformed.
+fn parse_mmco(r: &mut Bits<'_>) -> Res<Vec<Mmco>> {
+    const LIMIT: usize = 66;
+    let mut out = Vec::new();
+    loop {
+        let op = match r.ue()? {
+            0 => return Ok(out),
+            1 => Mmco::ShortTermUnused {
+                difference_of_pic_nums_minus1: r.ue()?,
+            },
+            2 => Mmco::LongTermUnused {
+                long_term_pic_num: r.ue()?,
+            },
+            3 => Mmco::ShortTermToLongTerm {
+                difference_of_pic_nums_minus1: r.ue()?,
+                long_term_frame_idx: r.ue()?,
+            },
+            4 => Mmco::MaxLongTermFrameIdx(r.ue()?.checked_sub(1)),
+            5 => Mmco::ClearAll,
+            6 => Mmco::CurrentToLongTerm {
+                long_term_frame_idx: r.ue()?,
+            },
+            _ => return Err("memory_management_control_operation out of range"),
+        };
+        if out.len() >= LIMIT {
+            return Err("too many reference marking operations");
+        }
+        out.push(op);
+    }
 }
 
 /// `slice_type` (0..=9) to the slice kinds this decoder handles.
@@ -656,6 +762,8 @@ fn parse_sps(rbsp: &[u8]) -> Res<Sps> {
     let mut log2_max_poc_lsb = 0;
     let mut delta_pic_order_always_zero = false;
     let mut offset_for_top_to_bottom_field = 0;
+    let mut offset_for_non_ref_pic = 0;
+    let mut offset_for_ref_frame = Vec::new();
     match poc_type {
         0 => {
             let minus4 = r.ue()?;
@@ -666,14 +774,14 @@ fn parse_sps(rbsp: &[u8]) -> Res<Sps> {
         }
         1 => {
             delta_pic_order_always_zero = r.flag()?;
-            r.se()?; // offset_for_non_ref_pic
+            offset_for_non_ref_pic = r.se()?;
             offset_for_top_to_bottom_field = r.se()?;
             let cycle = r.ue()?;
             if cycle > 255 {
                 return Err("num_ref_frames_in_pic_order_cnt_cycle out of range");
             }
             for _ in 0..cycle {
-                r.se()?; // offset_for_ref_frame[i]
+                offset_for_ref_frame.push(r.se()?);
             }
         }
         2 => {}
@@ -716,6 +824,8 @@ fn parse_sps(rbsp: &[u8]) -> Res<Sps> {
         log2_max_poc_lsb,
         delta_pic_order_always_zero,
         offset_for_top_to_bottom_field,
+        offset_for_non_ref_pic,
+        offset_for_ref_frame,
         gaps_in_frame_num_allowed,
         direct_8x8_inference,
         max_num_ref_frames,

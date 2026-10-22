@@ -5,6 +5,7 @@
 //! to agree on what a frame is.
 
 use std::os::fd::OwnedFd;
+use std::sync::Arc;
 
 /// Pixel format of a video frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -91,10 +92,49 @@ pub const fn drm_fourcc(a: u8, b: u8, c: u8, d: u8) -> u32 {
 }
 
 /// A DMA-BUF image: one buffer object that holds every plane.
+/// A handle to the pool slot behind a DMA-BUF image.
+///
+/// A decoded picture that is presented to a compositor aliases the decoder's pool. The
+/// compositor may still read it when the decoder wants the slot for the next picture. The
+/// image carries a lease, and the producer skips a slot whose lease somebody else still holds.
+#[derive(Clone, Default)]
+pub struct KeepAlive {
+    /// `None` for an image that aliases no pool.
+    inner: Option<Arc<()>>,
+}
+
+impl std::fmt::Debug for KeepAlive {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeepAlive")
+            .field("held", &self.is_held())
+            .finish()
+    }
+}
+
+impl KeepAlive {
+    /// A fresh lease. The producer keeps one and hands a copy to every image it exports.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: Some(Arc::new(())),
+        }
+    }
+
+    /// Whether somebody other than the producer still holds this lease.
+    #[must_use]
+    pub fn is_held(&self) -> bool {
+        self.inner
+            .as_ref()
+            .is_some_and(|inner| Arc::strong_count(inner) > 1)
+    }
+}
+
 #[derive(Debug)]
 pub struct DmabufImage {
     /// The DMA-BUF handle that holds all planes.
     pub fd: OwnedFd,
+    /// The lease of the pool slot this image aliases, when it aliases one.
+    pub keepalive: Option<KeepAlive>,
     /// DRM fourcc of the layout, for example `DRM_FORMAT_NV12`.
     pub fourcc: u32,
     /// DRM format modifier (tiling and compression). `DRM_FORMAT_MOD_LINEAR` is untiled.
@@ -124,11 +164,19 @@ impl DmabufImage {
         array[..planes.len()].copy_from_slice(planes);
         Ok(Self {
             fd,
+            keepalive: None,
             fourcc,
             modifier,
             planes: array,
             plane_count: planes.len(),
         })
+    }
+
+    /// The image with a lease on the pool slot it aliases.
+    #[must_use]
+    pub fn with_keepalive(mut self, keepalive: KeepAlive) -> Self {
+        self.keepalive = Some(keepalive);
+        self
     }
 
     /// The valid planes, in order.
@@ -224,6 +272,15 @@ pub trait VideoEncoder: Send {
     /// Force the next encoded frame to be a keyframe.
     fn request_keyframe(&mut self);
 
+    /// Make the next frame reference the frame of source `index`, which the client still has,
+    /// instead of the frames it lost; the frame is marked with a recovery point. Returns `false`
+    /// when the encoder cannot, and then the next frame is a keyframe.
+    fn recover_from(&mut self, index: u64) -> bool {
+        let _ = index;
+        self.request_keyframe();
+        false
+    }
+
     /// Number of frames encoded so far.
     fn frames_encoded(&self) -> u64;
 }
@@ -272,6 +329,34 @@ mod tests {
         assert!(PixelFormat::P010.is_ten_bit());
         assert!(PixelFormat::Nv12.is_subsampled());
         assert!(!PixelFormat::I444.is_subsampled());
+    }
+
+    #[test]
+    fn a_lease_is_held_while_an_image_carries_it() {
+        let lease = KeepAlive::new();
+        assert!(!lease.is_held(), "the producer's own copy does not hold it");
+        let copy = lease.clone();
+        assert!(lease.is_held(), "a second copy holds the slot");
+        drop(copy);
+        assert!(!lease.is_held());
+    }
+
+    #[test]
+    fn an_image_carries_its_lease() {
+        let lease = KeepAlive::new();
+        let image = DmabufImage::new(
+            null_fd(),
+            PixelFormat::Nv12.drm_fourcc(),
+            0,
+            &[DmabufPlane {
+                offset: 0,
+                stride: 16,
+            }],
+        )
+        .unwrap()
+        .with_keepalive(lease.clone());
+        assert!(image.keepalive.is_some());
+        assert!(lease.is_held(), "the image holds the slot");
     }
 
     #[test]

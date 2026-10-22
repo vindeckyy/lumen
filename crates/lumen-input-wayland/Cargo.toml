@@ -10,7 +10,7 @@ authors.workspace = true
 description = "Wayland client-side input capture."
 
 [dependencies]
-lumen-ffi-libei = { workspace = true }
+reis = { workspace = true }
 ashpd = { workspace = true, features = ["input_capture"] }
 tokio = { version = "1", features = ["rt"] }
 wayland-client = { workspace = true }

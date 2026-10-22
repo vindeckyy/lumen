@@ -14,7 +14,9 @@ use lumen_protocol::input::InputAction;
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use x11rb::connection::Connection;
 use x11rb::protocol::Event;
+use x11rb::protocol::render::{self, ConnectionExt as _};
 use x11rb::protocol::xinput::{self, ConnectionExt as _};
+use x11rb::protocol::xproto::{self, ConnectionExt as _};
 use x11rb::rust_connection::RustConnection;
 
 use crate::keyboard::evdev_code_from_x11;
@@ -31,6 +33,8 @@ pub struct WindowEventSource {
     keys_down: BTreeSet<u32>,
     buttons_down: BTreeSet<u32>,
     pending: VecDeque<InputAction>,
+    /// The cursor the window shows: hotspot, size and premultiplied ARGB pixels.
+    cursor: Option<(u16, u16, u16, u16, Vec<u8>)>,
 }
 
 impl WindowEventSource {
@@ -52,7 +56,108 @@ impl WindowEventSource {
             keys_down: BTreeSet::new(),
             buttons_down: BTreeSet::new(),
             pending: VecDeque::new(),
+            cursor: None,
         })
+    }
+
+    /// Shows `argb` (premultiplied, `width` x `height`, one little-endian `u32` per pixel) as the
+    /// window's cursor, with its hotspot at `hot_x`, `hot_y`. A zero width hides the cursor. The
+    /// shape stays when the window is replaced.
+    ///
+    /// # Errors
+    /// Returns [`RawError::Select`] when the X server refuses the cursor.
+    pub fn set_cursor(
+        &mut self,
+        hot_x: u16,
+        hot_y: u16,
+        width: u16,
+        height: u16,
+        argb: &[u8],
+    ) -> Result<(), RawError> {
+        self.cursor = Some((hot_x, hot_y, width, height, argb.to_vec()));
+        self.apply_cursor()
+    }
+
+    /// Builds the stored cursor with the Render extension and sets it on the window.
+    fn apply_cursor(&mut self) -> Result<(), RawError> {
+        let (Some((hot_x, hot_y, width, height, argb)), window) = (&self.cursor, self.window)
+        else {
+            return Ok(());
+        };
+        if window == 0 {
+            return Ok(());
+        }
+        let err = |e: &dyn std::fmt::Display| RawError::Select(format!("cursor: {e}"));
+        // A hidden cursor is a transparent pixel.
+        let (width, height, pixels) = if *width == 0 {
+            (1, 1, vec![0u8; 4])
+        } else {
+            (*width, *height, argb.clone())
+        };
+        let formats = self
+            .conn
+            .render_query_pict_formats()
+            .map_err(|e| err(&e))?
+            .reply()
+            .map_err(|e| err(&e))?;
+        let format = formats
+            .formats
+            .iter()
+            .find(|f| {
+                f.type_ == render::PictType::DIRECT
+                    && f.depth == 32
+                    && f.direct.alpha_shift == 24
+                    && f.direct.red_shift == 16
+                    && f.direct.green_shift == 8
+                    && f.direct.blue_shift == 0
+            })
+            .ok_or_else(|| RawError::Select("cursor: the X server has no ARGB32 format".into()))?
+            .id;
+        let root = self.conn.setup().roots[0].root;
+        let pixmap = self.conn.generate_id().map_err(|e| err(&e))?;
+        let gc = self.conn.generate_id().map_err(|e| err(&e))?;
+        let picture = self.conn.generate_id().map_err(|e| err(&e))?;
+        let cursor = self.conn.generate_id().map_err(|e| err(&e))?;
+        self.conn
+            .create_pixmap(32, pixmap, root, width, height)
+            .map_err(|e| err(&e))?;
+        self.conn
+            .create_gc(gc, pixmap, &xproto::CreateGCAux::new())
+            .map_err(|e| err(&e))?;
+        self.conn
+            .put_image(
+                xproto::ImageFormat::Z_PIXMAP,
+                pixmap,
+                gc,
+                width,
+                height,
+                0,
+                0,
+                0,
+                32,
+                &pixels,
+            )
+            .map_err(|e| err(&e))?;
+        self.conn
+            .render_create_picture(picture, pixmap, format, &render::CreatePictureAux::new())
+            .map_err(|e| err(&e))?;
+        self.conn
+            .render_create_cursor(cursor, picture, *hot_x, *hot_y)
+            .map_err(|e| err(&e))?;
+        self.conn
+            .change_window_attributes(
+                window,
+                &xproto::ChangeWindowAttributesAux::new().cursor(cursor),
+            )
+            .map_err(|e| err(&e))?;
+        // The window holds its own reference to the cursor.
+        self.conn.free_cursor(cursor).map_err(|e| err(&e))?;
+        self.conn
+            .render_free_picture(picture)
+            .map_err(|e| err(&e))?;
+        self.conn.free_gc(gc).map_err(|e| err(&e))?;
+        self.conn.free_pixmap(pixmap).map_err(|e| err(&e))?;
+        self.conn.flush().map_err(|e| err(&e))
     }
 
     /// Watch `window` from now on. Anything held down on the previous window is released.
@@ -68,6 +173,8 @@ impl WindowEventSource {
         if window == 0 {
             return Ok(());
         }
+        // A new window starts with the default cursor.
+        self.apply_cursor()?;
         let mask = xinput::XIEventMask::KEY_PRESS
             | xinput::XIEventMask::KEY_RELEASE
             | xinput::XIEventMask::BUTTON_PRESS

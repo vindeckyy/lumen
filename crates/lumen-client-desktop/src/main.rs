@@ -16,11 +16,13 @@ Usage: lumen-client [options]
 
 Options:
   --host <addr>        Address of the host's control listener (default 127.0.0.1:24800)
-  --media-bind <addr>  Address the media socket binds to (default 0.0.0.0:0, any port)
+  --media-bind <addr>  Address the media socket binds to (default 0.0.0.0:24801, the
+                       port lumen-host sends to unless its --client-media-port differs)
   --title <text>       Window title (default Lumen)
   --wayland            Present through Wayland
   --x11                Present through X11
-  --present <name>     Present backend: auto, wayland or x11
+  --present <name>     Present backend: auto, wayland or x11. Auto picks X11
+                       when the Wayland compositor draws no window frames
   --duration <seconds> Stop after this many seconds
   --report <path>      Write the run counters as JSON to this file
   --events <path>      Write the session events as JSON lines to this file
@@ -32,6 +34,9 @@ Options:
                        depth-one queue and a 1920x1080 width guard
   --no-input           Do not send the keyboard and pointer of the viewer window
                        to the host
+  --wake <mac>         Send a wake-on-lan packet to this MAC address before
+                       connecting, for a host that is asleep
+  --discover           List the hosts that answer on mDNS and exit
   -h, --help           Print this text
 ";
 
@@ -59,7 +64,7 @@ impl std::fmt::Display for ArgError {
 /// Run the daemon.
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let (config, report) = match parse(&args) {
+    let (config, report, discover) = match parse(&args) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("lumen-client: {e}");
@@ -67,6 +72,31 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+
+    if discover {
+        // The hosts that answer on mDNS, so the user does not have to type an address.
+        match lumen_transport::mdns::browse(std::time::Duration::from_secs(3)) {
+            Ok(hosts) if hosts.is_empty() => {
+                eprintln!("lumen-client: no host answered on mDNS");
+            }
+            Ok(hosts) => {
+                for host in hosts {
+                    println!(
+                        "{} {}:{} {}",
+                        host.name,
+                        host.address,
+                        host.port,
+                        host.fingerprint.as_deref().unwrap_or("")
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!("lumen-client: cannot browse on mDNS: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+        return ExitCode::SUCCESS;
+    }
 
     eprintln!(
         "lumen-client: host {}, media bind {}",
@@ -126,7 +156,7 @@ fn write_report(path: &std::path::Path, stats: &ClientStats) -> ExitCode {
 }
 
 /// Parse the command line.
-fn parse(args: &[String]) -> Result<(ClientConfig, Option<std::path::PathBuf>), ArgError> {
+fn parse(args: &[String]) -> Result<(ClientConfig, Option<std::path::PathBuf>, bool), ArgError> {
     let mut config = ClientConfig::default();
     let mut backend = None;
     let mut report = None;
@@ -134,6 +164,8 @@ fn parse(args: &[String]) -> Result<(ClientConfig, Option<std::path::PathBuf>), 
     let mut pairing_code = None;
     let mut pairing_code_file = None;
     let mut events = None;
+    // The hosts that answer on mDNS, for `--discover`.
+    let mut discover = false;
 
     let mut it = args.iter();
     while let Some(arg) = it.next() {
@@ -168,11 +200,13 @@ fn parse(args: &[String]) -> Result<(ClientConfig, Option<std::path::PathBuf>), 
                 let choice =
                     lumen_host_service::backend::BackendChoice::parse(&value("--present")?)
                         .map_err(ArgError::Invalid)?;
-                backend = Some(match choice {
-                    lumen_host_service::backend::BackendChoice::Auto => default_backend(),
-                    lumen_host_service::backend::BackendChoice::Wayland => RenderBackend::Wayland,
-                    lumen_host_service::backend::BackendChoice::X11 => RenderBackend::X11,
-                });
+                backend = match choice {
+                    lumen_host_service::backend::BackendChoice::Auto => None,
+                    lumen_host_service::backend::BackendChoice::Wayland => {
+                        Some(RenderBackend::Wayland)
+                    }
+                    lumen_host_service::backend::BackendChoice::X11 => Some(RenderBackend::X11),
+                };
             }
             "--report" => report = Some(std::path::PathBuf::from(value("--report")?)),
             "--events" => events = Some(std::path::PathBuf::from(value("--events")?)),
@@ -190,6 +224,13 @@ fn parse(args: &[String]) -> Result<(ClientConfig, Option<std::path::PathBuf>), 
             "--reconnect" => config.reconnect = true,
             "--low-power" => config.low_power = true,
             "--no-input" => config.input = false,
+            "--discover" => discover = true,
+            "--wake" => {
+                config.wake = Some(
+                    lumen_transport::MacAddr::parse(&value("--wake")?)
+                        .map_err(ArgError::Invalid)?,
+                );
+            }
             "--duration" => {
                 let seconds: f64 = value("--duration")?
                     .parse()
@@ -210,13 +251,5 @@ fn parse(args: &[String]) -> Result<(ClientConfig, Option<std::path::PathBuf>), 
     config.pairing_code = pairing_code;
     config.pairing_code_file = pairing_code_file;
     config.events = events;
-    Ok((config, report))
-}
-
-/// Pick the display server from the environment.
-fn default_backend() -> RenderBackend {
-    match lumen_host_service::backend::detect_display_server() {
-        Some(lumen_host_service::backend::DisplayServer::Wayland) => RenderBackend::Wayland,
-        _ => RenderBackend::X11,
-    }
+    Ok((config, report, discover))
 }

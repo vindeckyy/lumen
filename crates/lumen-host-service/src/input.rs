@@ -2,14 +2,19 @@
 //!
 //! The input socket is its own, with its own socket and thread, so no input event waits behind
 //! video. A host that captures an X11 display injects into that display through XTEST, so the
-//! input lands on the screen being shared. Otherwise it injects through uinput, which reaches
-//! native Wayland windows.
+//! input lands on the screen being shared. A Wayland host injects through the wlroots virtual
+//! input protocols into the compositor it captures, and through uinput when the compositor does
+//! not offer them. Gamepads become virtual DualSense pads through uhid on either.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::mpsc::Sender;
 
 use lumen_crypto::PacketCipher;
-use lumen_input_inject::{InputInjector, UinputInjector, XTestInjector};
+use lumen_input_inject::{
+    Gamepads, InputInjector, Rumble, TouchInjector, UinputInjector, UinputTouch, WlrInjector,
+    XTestInjector,
+};
 use lumen_input_wayland::{InputEvent, InputEventKind};
 use lumen_protocol::input::InputAction;
 use lumen_transport::input_channel::{InputReceiver, InputThread, InputThreadOutcome};
@@ -24,8 +29,9 @@ pub const INPUT_PORT: u16 = 24820;
 pub enum InjectTarget {
     /// The X11 display the host captures (`None` reads `$DISPLAY`), through XTEST.
     X11(Option<String>),
-    /// The kernel, through uinput.
-    Uinput,
+    /// The Wayland compositor the host captures, through the wlroots virtual input protocols;
+    /// absolute motion maps onto the named output. Falls back to uinput.
+    Wayland(Option<String>),
 }
 
 /// The input path of one session: a socket thread that injects every event it receives.
@@ -37,8 +43,8 @@ pub struct InputStage {
 impl InputStage {
     /// Binds `addr` and injects the events it receives into `target`. Positions arrive in pixels
     /// of the picture the host serves and are scaled to `capture`, the size of the captured
-    /// screen. Without an injector or the socket the session runs with no input, and the log
-    /// says why.
+    /// screen. What games ask of the virtual pads' motors goes to `rumble`. Without an injector
+    /// or the socket the session runs with no input, and the log says why.
     // shortcut: one input socket per host port, so only the first session to start gets input;
     // upgrade to a socket per session when a second client has to drive the same host.
     #[must_use]
@@ -48,23 +54,40 @@ impl InputStage {
         target: &InjectTarget,
         capture: (u32, u32),
         settings: Arc<HostSettings>,
+        rumble: Sender<Rumble>,
     ) -> Option<Self> {
         let (width, height) = capture;
         // The injector gets positions already in capture pixels, so its own scale is one.
-        let injector: Result<Box<dyn InputInjector>, String> = match target {
+        let injector: Result<(Box<dyn InputInjector>, &str), String> = match target {
             InjectTarget::X11(display) => {
                 XTestInjector::connect_to(display.as_deref(), width, height)
-                    .map(|i| Box::new(i) as Box<dyn InputInjector>)
+                    .map(|i| (Box::new(i) as Box<dyn InputInjector>, "XTEST"))
             }
-            InjectTarget::Uinput => {
-                UinputInjector::new(width, height).map(|i| Box::new(i) as Box<dyn InputInjector>)
+            InjectTarget::Wayland(output) => {
+                match WlrInjector::connect(output.as_deref(), width, height) {
+                    Ok(i) => Ok((
+                        Box::new(i) as Box<dyn InputInjector>,
+                        "wlroots virtual input",
+                    )),
+                    Err(wlr) => UinputInjector::new(width, height)
+                        .map(|i| (Box::new(i) as Box<dyn InputInjector>, "uinput"))
+                        .map_err(|e| format!("{wlr}; {e}")),
+                }
             }
         };
-        let mut injector = match injector {
+        let (mut injector, backend) = match injector {
             Ok(injector) => injector,
             Err(e) => {
                 crate::host_log!(warn "lumen-host: input injection unavailable: {e}");
                 return None;
+            }
+        };
+        // Touch and pen samples go into the kernel, because no display protocol carries them.
+        let mut touch = match UinputTouch::new(width, height) {
+            Ok(touch) => Some(touch),
+            Err(e) => {
+                crate::host_log!(warn "lumen-host: touch and pen unavailable: {e}");
+                None
             }
         };
         let receiver = match InputReceiver::bind(addr, cipher) {
@@ -74,24 +97,70 @@ impl InputStage {
                 return None;
             }
         };
-        crate::host_log!(info "lumen-host: input from the client is injected through {}", match target {
-            InjectTarget::X11(_) => "XTEST",
-            InjectTarget::Uinput => "uinput",
-        });
+        crate::host_log!(info "lumen-host: input from the client is injected through {backend}");
         // A failing injector fails on every event, so the first failure is the only one logged.
         let mut reported = false;
+        let mut touch_reported = false;
+        let mut pads = Gamepads::new(rumble);
+        let mut pads_reported = false;
         let thread = InputThread::spawn(receiver, move |envelope| {
             let served = settings.quality();
             let scale = (
                 f64::from(width) / f64::from(served.width.max(1)),
                 f64::from(height) / f64::from(served.height.max(1)),
             );
-            let event = to_event(envelope.action, envelope.client_ts_us, scale);
-            if let Err(e) = injector.inject(&event)
-                && !reported
-            {
-                reported = true;
-                crate::host_log!(warn "lumen-host: input injection failed: {e}");
+            match envelope.action {
+                InputAction::Touch { slot, phase, x, y } => {
+                    let Some(touch) = touch.as_mut() else {
+                        return;
+                    };
+                    // The coordinates are a fraction of the client's screen, so they land on the
+                    // capture whatever picture the client is shown.
+                    if let Err(e) =
+                        touch.touch(slot, phase, x * f64::from(width), y * f64::from(height))
+                        && !touch_reported
+                    {
+                        touch_reported = true;
+                        crate::host_log!(warn "lumen-host: touch injection failed: {e}");
+                    }
+                }
+                InputAction::Pen {
+                    x,
+                    y,
+                    pressure,
+                    in_range,
+                } => {
+                    let Some(touch) = touch.as_mut() else {
+                        return;
+                    };
+                    if let Err(e) = touch.pen(
+                        x * f64::from(width),
+                        y * f64::from(height),
+                        pressure,
+                        in_range,
+                    ) && !touch_reported
+                    {
+                        touch_reported = true;
+                        crate::host_log!(warn "lumen-host: pen injection failed: {e}");
+                    }
+                }
+                action => {
+                    let Some(event) = to_event(action, envelope.client_ts_us, scale) else {
+                        if let Err(e) = pads.apply(&action)
+                            && !pads_reported
+                        {
+                            pads_reported = true;
+                            crate::host_log!(warn "lumen-host: gamepad input failed: {e}");
+                        }
+                        return;
+                    };
+                    if let Err(e) = injector.inject(&event)
+                        && !reported
+                    {
+                        reported = true;
+                        crate::host_log!(warn "lumen-host: input injection failed: {e}");
+                    }
+                }
             }
         });
         Some(Self { thread })
@@ -103,10 +172,10 @@ impl InputStage {
     }
 }
 
-/// The injector's event for one wire action. Absolute positions are multiplied by `scale`, from
-/// picture pixels to screen pixels. Relative motion carries `NaN` positions, which is how the
-/// event type marks it.
-fn to_event(action: InputAction, received_us: u64, scale: (f64, f64)) -> InputEvent {
+/// The injector's event for one wire action, or `None` for a gamepad action. Absolute positions
+/// are multiplied by `scale`, from picture pixels to screen pixels. Relative motion carries `NaN`
+/// positions, which is how the event type marks it.
+fn to_event(action: InputAction, received_us: u64, scale: (f64, f64)) -> Option<InputEvent> {
     let kind = match action {
         InputAction::Key { keycode, pressed } => InputEventKind::Key { keycode, pressed },
         InputAction::MotionRelative { dx, dy } => InputEventKind::Motion {
@@ -123,8 +192,12 @@ fn to_event(action: InputAction, received_us: u64, scale: (f64, f64)) -> InputEv
         },
         InputAction::Button { button, pressed } => InputEventKind::Button { button, pressed },
         InputAction::Scroll { dx, dy } => InputEventKind::Scroll { dx, dy },
+        InputAction::Gamepad { .. }
+        | InputAction::GamepadRemoved { .. }
+        | InputAction::Touch { .. }
+        | InputAction::Pen { .. } => return None,
     };
-    InputEvent { kind, received_us }
+    Some(InputEvent { kind, received_us })
 }
 
 #[cfg(test)]
@@ -138,6 +211,7 @@ mod tests {
             1,
             (1.5, 1.5),
         )
+        .expect("an event")
         .kind
         {
             InputEventKind::Motion { dx, dy, x, y } => {
@@ -152,6 +226,7 @@ mod tests {
             1,
             (1.5, 1.5),
         )
+        .expect("an event")
         .kind
         {
             InputEventKind::Motion { dx, dy, x, y } => {
@@ -170,7 +245,8 @@ mod tests {
             },
             7,
             (1.0, 1.0),
-        );
+        )
+        .expect("an event");
         assert_eq!(key.received_us, 7);
         assert_eq!(
             key.kind,
@@ -188,6 +264,7 @@ mod tests {
                 0,
                 (2.0, 2.0)
             )
+            .expect("an event")
             .kind,
             InputEventKind::Button {
                 button: 0x110,

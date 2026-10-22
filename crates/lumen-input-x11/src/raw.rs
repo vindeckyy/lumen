@@ -419,6 +419,17 @@ impl RawEventSource {
     pub fn poll_raw(&mut self, timeout: Duration) -> Result<Option<RawEvent>, RawError> {
         let deadline = Instant::now() + timeout;
         loop {
+            // x11rb reads every available byte at once, so several events can sit in its buffer
+            // while the socket is empty: drain the buffer before waiting on the socket.
+            while let Some(event) = self
+                .conn
+                .poll_for_event()
+                .map_err(|e| RawError::Connection(e.to_string()))?
+            {
+                if let Some(raw) = self.translate(&event) {
+                    return Ok(Some(raw));
+                }
+            }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Ok(None);
@@ -432,18 +443,8 @@ impl RawEventSource {
             match poll(&mut fds, Some(&timespec)) {
                 Ok(0) => return Ok(None),
                 Ok(_) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
                 Err(e) => return Err(RawError::Poll(e.to_string())),
-            }
-            let event = self
-                .conn
-                .poll_for_event()
-                .map_err(|e| RawError::Connection(e.to_string()))?;
-            let Some(event) = event else {
-                continue;
-            };
-            if let Some(raw) = self.translate(&event) {
-                return Ok(Some(raw));
             }
         }
     }

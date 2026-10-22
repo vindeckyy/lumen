@@ -3,7 +3,7 @@
 //! Two sources produce [`InputEvent`] values:
 //!
 //! * [`EisSource`] reads captured input from the InputCapture portal's EIS connection through
-//!   `lumen-ffi-libei`. This is the primary path.
+//!   the pure-Rust `reis` crate ([`ei_peer`]). This is the primary path.
 //! * [`WaylandSource`] reads `wl_seat` pointer and keyboard events for the client's own surfaces.
 //!   It is the fallback when the portal is unavailable.
 //!
@@ -13,6 +13,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod ei_peer;
 mod eis;
 mod keyboard;
 mod portal;

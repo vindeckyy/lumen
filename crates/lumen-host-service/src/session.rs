@@ -11,7 +11,8 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 
 use lumen_crypto::{
-    AeadKind, CryptoError, DeviceIdentity, Handshake, PacketCipher, PairingCode, Role, SessionKeys,
+    AeadKind, ChannelBinding, CryptoError, DeviceIdentity, Handshake, PAKE_MESSAGE_LEN,
+    PacketCipher, PairingCode, PairingPake, Role, SessionKeys, confirmation_matches, host_proof,
     pairing_proof, random_bytes,
 };
 use lumen_protocol::{Capabilities, ProtocolError, SUPPORTED_VERSIONS, VERSION, VersionHandshake};
@@ -64,15 +65,18 @@ pub enum SessionError {
     /// The pairing was refused, by the user or by the client.
     #[error("the pairing was refused")]
     PairingRefused,
+    /// The host did not prove that it owns the key it names, or that it knows the pairing code.
+    #[error("the host did not prove its identity or the pairing code")]
+    HostProof,
 }
 
-/// A completed handshake: the session keys and the peer's static public key.
+/// A completed handshake: the session keys and the static keys both ends used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Established {
     /// Keys and identifier of the session.
     pub keys: SessionKeys,
-    /// The peer's static public key, as authenticated by the handshake.
-    pub remote_static: Option<[u8; 32]>,
+    /// The Noise static keys of this connection, as authenticated by the handshake.
+    pub binding: ChannelBinding,
     /// The transport cipher both ends agreed on.
     pub aead: AeadKind,
     /// The peer's capability bitmap, carried in the handshake.
@@ -118,9 +122,23 @@ pub fn establish(
         }
     };
     let result = hs.finish()?;
+    // Noise XX always sends both static keys, so a missing one is a broken handshake.
+    let remote = result
+        .remote_static
+        .ok_or(SessionError::Unexpected("the peer sent no static key"))?;
+    let binding = match role {
+        Role::Initiator => ChannelBinding {
+            client_static: result.local_static,
+            host_static: remote,
+        },
+        Role::Responder => ChannelBinding {
+            client_static: remote,
+            host_static: result.local_static,
+        },
+    };
     Ok(Established {
         keys: SessionKeys::derive(&result.key_material),
-        remote_static: result.remote_static,
+        binding,
         aead,
         peer_capabilities,
     })
@@ -223,55 +241,69 @@ pub fn media_receiver(keys: &SessionKeys, aead: AeadKind) -> MediaReceiver {
 }
 
 /// Client side of the hello: send `Hello`, then check the `HelloAck` session
-/// id and the negotiated version and capabilities.
+/// id, the negotiated version and capabilities, and the host's proof.
 ///
-/// The host may answer with a pairing challenge instead of `HelloAck`. The
-/// `answer` callback is then called with the code the host shows; it returns
-/// the code to send back, or `None` to refuse the pairing.
+/// The host always sends a pairing challenge first. When it asks for a code,
+/// the `answer` callback is called; it returns the code the user typed, or
+/// `None` to refuse the pairing. The code never leaves this machine: it only
+/// feeds the SPAKE2 exchange, which is bound to `binding`.
 ///
 /// # Errors
-/// Returns an error when the exchange fails or the host's answer is invalid.
+/// Returns an error when the exchange fails, the host does not authorise the
+/// client, or the host does not prove its key or the pairing code.
 pub fn client_hello(
     channel: &mut ControlChannel,
     identity: &DeviceIdentity,
     keys: &SessionKeys,
+    binding: &ChannelBinding,
     capabilities: Capabilities,
     answer: &mut dyn FnMut(PairingChallenge) -> Option<PairingCode>,
-) -> Result<(u8, Capabilities, bool), SessionError> {
+) -> Result<ClientHello, SessionError> {
     let device_key = identity.public_bytes();
     channel.send(&ControlMessage::Hello {
         version: VERSION,
         capabilities,
         device_key,
     })?;
-    let (version, agreed, session_id, paired) = loop {
+    // The confirmation the host must send back, when this session ran the pairing exchange.
+    let mut expected_confirm = None;
+    let (version, agreed, session_id, paired, host_key, confirm, signature) = loop {
         match channel.recv()? {
             ControlMessage::HelloAck {
                 version,
                 capabilities: agreed,
                 session_id,
                 paired,
-            } => break (version, agreed, session_id, paired),
+                host_key,
+                confirm,
+                signature,
+            } => {
+                break (
+                    version, agreed, session_id, paired, host_key, confirm, signature,
+                );
+            }
             ControlMessage::PairingChallenge {
-                code,
                 host_key,
                 nonce,
+                pake,
             } => {
-                // The signature proves this client owns the identity key it
-                // claimed. The code is what the user reads on the host.
-                let message = pairing_proof(&nonce, &host_key, &device_key);
-                let signature = identity.sign_bytes(&message);
-                let challenge = PairingChallenge {
-                    code: PairingCode::new(code),
-                    host_key,
-                };
-                let response = match answer(challenge) {
-                    Some(code) => code.value(),
-                    None => 0,
-                };
+                // The signature proves this client owns the identity key it claimed.
+                let signature =
+                    identity.sign_bytes(&pairing_proof(&nonce, &host_key, &device_key, binding));
+                let mut response = ([0u8; PAKE_MESSAGE_LEN], [0u8; 32]);
+                // An all-zero message means the host trusts this client and asks for no code.
+                if pake != [0u8; PAKE_MESSAGE_LEN]
+                    && let Some(code) = answer(PairingChallenge { host_key })
+                {
+                    let (state, message) = PairingPake::start(Role::Initiator, code, binding);
+                    let confirmations = state.finish(&pake)?;
+                    expected_confirm = Some(confirmations.host);
+                    response = (message, confirmations.client);
+                }
                 channel.send(&ControlMessage::PairingResponse {
-                    code: response,
                     signature,
+                    pake: response.0,
+                    confirm: response.1,
                 })?;
             }
             other => {
@@ -294,7 +326,26 @@ pub fn client_hello(
     if !paired {
         return Err(SessionError::NotPaired);
     }
-    Ok((version, agreed, paired))
+    // The host signs this connection with the key it names, so the key the client pins is
+    // the key of the peer it talks to, not one a third party copied.
+    DeviceIdentity::verify_bytes(
+        &host_key,
+        &host_proof(&host_key, &device_key, binding),
+        &signature,
+    )
+    .map_err(|_| SessionError::HostProof)?;
+    let pairing_confirmed = match expected_confirm {
+        Some(expected) if confirmation_matches(&expected, &confirm) => true,
+        Some(_) => return Err(SessionError::HostProof),
+        None => false,
+    };
+    Ok(ClientHello {
+        version,
+        capabilities: agreed,
+        paired,
+        host_key,
+        pairing_confirmed,
+    })
 }
 
 /// Host side of the hello: read `Hello`, negotiate, authorise the client and
@@ -303,9 +354,10 @@ pub fn client_hello(
 /// Returns the negotiated version, capabilities, and the client's device key.
 ///
 /// A client the host does not trust yet is authorised by the pairing code,
-/// when the policy is [`PairingMode::Prompt`]. The code is bound to the
-/// client's Noise static key, so it is valid only for this handshake. When
-/// the policy is [`PairingMode::Refuse`] an unknown client is turned away.
+/// when the policy is [`PairingMode::Prompt`]: both ends run SPAKE2 over the
+/// code, bound to `binding`, and the client must send the matching
+/// confirmation. The code itself never crosses the wire. When the policy is
+/// [`PairingMode::Refuse`] an unknown client is turned away.
 ///
 /// # Errors
 /// Returns an error when the exchange fails, the versions or capabilities do
@@ -313,6 +365,7 @@ pub fn client_hello(
 pub fn host_hello(
     channel: &mut ControlChannel,
     keys: &SessionKeys,
+    binding: &ChannelBinding,
     capabilities: Capabilities,
     policy: &PairingPolicy,
 ) -> Result<Authorised, SessionError> {
@@ -335,93 +388,117 @@ pub fn host_hello(
         },
         SUPPORTED_VERSIONS,
     )?;
+    let host_key = policy.identity.public_bytes();
+    // Every answer carries the host's signature over this connection, so the client can
+    // check the key it pinned.
+    let ack = |paired: bool, confirm: [u8; 32]| ControlMessage::HelloAck {
+        version: agreed_version,
+        capabilities: agreed,
+        session_id: keys.session_id,
+        paired,
+        host_key,
+        confirm,
+        signature: policy
+            .identity
+            .sign_bytes(&host_proof(&host_key, &device_key, binding)),
+    };
 
-    let mut newly_paired = false;
     let trusted = policy.is_trusted(&device_key);
     // The client proves that it owns the identity key it claimed. Without
     // this, anyone who knew the public key could claim to be that client.
     let nonce = random_bytes::<32>();
-    let code = policy.challenge(&device_key);
-    if let Some(path) = &policy.code_file {
-        let _ = write_code_file(path, code);
-    }
+    // The exchange runs only for a client the host would pair.
+    let (pake, host_message) = if !trusted && policy.mode == PairingMode::Prompt {
+        crate::host_log!(info
+            "lumen-host: a new client asks to pair; type the code {} on the client",
+            policy.code
+        );
+        if let Some(path) = &policy.code_file {
+            write_code_file(path, policy.code);
+        }
+        let (state, message) = PairingPake::start(Role::Responder, policy.code, binding);
+        (Some(state), message)
+    } else {
+        (None, [0u8; PAKE_MESSAGE_LEN])
+    };
     channel.send(&ControlMessage::PairingChallenge {
-        code: code.value(),
-        host_key: policy.host_public,
+        host_key,
         nonce,
+        pake: host_message,
     })?;
     let ControlMessage::PairingResponse {
-        code: answer,
         signature,
+        pake: client_message,
+        confirm,
     } = channel.recv()?
     else {
         return Err(SessionError::Unexpected("expected PairingResponse"));
     };
-    let proof = pairing_proof(&nonce, &policy.host_public, &device_key);
+    let proof = pairing_proof(&nonce, &host_key, &device_key, binding);
     if let Err(e) = DeviceIdentity::verify_bytes(&device_key, &proof, &signature) {
         crate::host_log!(warn "lumen-host: the client did not prove its identity: {e}");
-        channel.send(&ControlMessage::HelloAck {
-            version: agreed_version,
-            capabilities: agreed,
-            session_id: keys.session_id,
-            paired: false,
-        })?;
+        channel.send(&ack(false, [0u8; 32]))?;
         return Err(SessionError::NotPaired);
     }
 
+    let mut host_confirm = [0u8; 32];
     if !trusted {
-        match policy.mode {
-            PairingMode::Refuse => {
-                channel.send(&ControlMessage::HelloAck {
-                    version: agreed_version,
-                    capabilities: agreed,
-                    session_id: keys.session_id,
-                    paired: false,
-                })?;
-                return Err(SessionError::NotPaired);
-            }
-            PairingMode::Prompt => {
-                if answer != code.value() {
-                    channel.send(&ControlMessage::HelloAck {
-                        version: agreed_version,
-                        capabilities: agreed,
-                        session_id: keys.session_id,
-                        paired: false,
-                    })?;
-                    return Err(SessionError::PairingRefused);
-                }
-                newly_paired = true;
-            }
-        }
+        let Some(pake) = pake else {
+            channel.send(&ack(false, [0u8; 32]))?;
+            return Err(SessionError::NotPaired);
+        };
+        // A wrong code, or a third party in the middle, gives different keys, so the
+        // confirmations disagree.
+        let confirmed = pake
+            .finish(&client_message)
+            .ok()
+            .filter(|c| confirmation_matches(&c.client, &confirm));
+        let Some(confirmations) = confirmed else {
+            channel.send(&ack(false, [0u8; 32]))?;
+            return Err(SessionError::PairingRefused);
+        };
+        host_confirm = confirmations.host;
     }
 
-    channel.send(&ControlMessage::HelloAck {
-        version: agreed_version,
-        capabilities: agreed,
-        session_id: keys.session_id,
-        paired: true,
-    })?;
+    channel.send(&ack(true, host_confirm))?;
     Ok(Authorised {
         version: agreed_version,
         capabilities: agreed,
         device_key,
-        newly_paired,
+        newly_paired: !trusted,
     })
 }
 
-/// Write the pairing code to a file, so a script can read it.
-fn write_code_file(path: &std::path::Path, code: PairingCode) -> std::io::Result<()> {
+/// What the host's answer to the client's hello was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClientHello {
+    /// The negotiated protocol version.
+    pub version: u8,
+    /// The negotiated capabilities.
+    pub capabilities: Capabilities,
+    /// Whether the client is authorised.
+    pub paired: bool,
+    /// The host's Ed25519 public key, which the host proved it owns on this connection. The
+    /// client pins it, so a different host cannot take the place of the one it paired with.
+    pub host_key: [u8; 32],
+    /// Whether the host proved, in this session, that it knows the pairing code the user typed.
+    pub pairing_confirmed: bool,
+}
+
+/// Write the pairing code to a file, so a script can read it. The code is a
+/// secret until the pairing ends, so only the owner may read the file.
+fn write_code_file(path: &std::path::Path, code: PairingCode) {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+        let _ = std::fs::create_dir_all(parent);
     }
-    std::fs::write(path, format!("{code}\n"))
+    if let Err(e) = crate::pairing::write_owner_only(path, format!("{code}\n").as_bytes()) {
+        crate::host_log!(warn "lumen-host: cannot write the pairing code file: {e}");
+    }
 }
 
 /// What the host asks the client to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PairingChallenge {
-    /// The code the host shows on its own screen.
-    pub code: PairingCode,
     /// The host's Ed25519 public key, so the client can name the host.
     pub host_key: [u8; 32],
 }
@@ -444,22 +521,22 @@ pub struct Authorised {
 pub enum PairingMode {
     /// Turn the client away. The client must be trusted out of band first.
     Refuse,
-    /// Show a code and wait for the client to send it back.
+    /// Show a code and pair the client that proves it knows the code.
     Prompt,
 }
 
 /// How the host authorises clients.
 #[derive(Debug, Clone)]
 pub struct PairingPolicy {
-    /// The host's Ed25519 public key.
-    pub host_public: [u8; 32],
+    /// The host's identity, which signs every answer.
+    pub identity: DeviceIdentity,
     /// The clients the host already trusts.
     pub trusted: Vec<[u8; 32]>,
     /// What to do with a client that is not trusted yet.
     pub mode: PairingMode,
-    /// The nonce the pairing code is bound to. It is the peer's Noise static
-    /// key, so it changes with every handshake.
-    pub client_nonce: [u8; 32],
+    /// The code the host shows for this attempt. Make a fresh one with
+    /// [`PairingCode::random`] for every connection.
+    pub code: PairingCode,
     /// Where the host writes the code it shows, so another process can read
     /// it. `None` means the code is only printed.
     pub code_file: Option<std::path::PathBuf>,
@@ -470,11 +547,6 @@ impl PairingPolicy {
     #[must_use]
     pub fn is_trusted(&self, device_key: &[u8; 32]) -> bool {
         self.trusted.contains(device_key)
-    }
-    /// The pairing code for this handshake attempt.
-    #[must_use]
-    pub fn challenge(&self, _device_key: &[u8; 32]) -> PairingCode {
-        PairingCode::derive(&self.host_public, &self.client_nonce)
     }
 }
 
@@ -521,13 +593,19 @@ mod tests {
             let est = establish(&mut stream, Role::Responder, Capabilities::H264)?;
             let mut channel = control_channel(stream, &est, Role::Responder)?;
             let policy = PairingPolicy {
-                host_public: [9u8; 32],
+                identity: DeviceIdentity::generate().expect("host identity"),
                 trusted,
                 mode: PairingMode::Refuse,
-                client_nonce: est.remote_static.unwrap_or([0u8; 32]),
+                code: PairingCode::random(),
                 code_file: None,
             };
-            let authorised = host_hello(&mut channel, &est.keys, Capabilities::H264, &policy)?;
+            let authorised = host_hello(
+                &mut channel,
+                &est.keys,
+                &est.binding,
+                Capabilities::H264,
+                &policy,
+            )?;
             assert!(!authorised.newly_paired);
             let ControlMessage::Ping { ts_us } = channel.recv()? else {
                 return Err(SessionError::Unexpected("expected Ping"));
@@ -547,17 +625,18 @@ mod tests {
             establish(&mut stream, Role::Initiator, Capabilities::H264).expect("client handshake");
         let mut channel = control_channel(stream, &est, Role::Initiator).expect("client channel");
         let mut answer = |_challenge: PairingChallenge| None;
-        let (version, caps, paired) = client_hello(
+        let hello = client_hello(
             &mut channel,
             &device,
             &est.keys,
+            &est.binding,
             Capabilities::H264,
             &mut answer,
         )
         .expect("client hello");
-        assert_eq!(version, VERSION);
-        assert_eq!(caps, Capabilities::H264);
-        assert!(paired);
+        assert_eq!(hello.version, VERSION);
+        assert_eq!(hello.capabilities, Capabilities::H264);
+        assert!(hello.paired);
         channel
             .send(&ControlMessage::Ping { ts_us: 5 })
             .expect("ping");
@@ -583,78 +662,114 @@ mod tests {
             .expect("host session");
     }
 
-    /// A host that trusts the client lets it in without a code.
+    /// The code the host of the pairing tests shows.
+    const CODE: PairingCode = PairingCode::new(123_456);
+
+    /// The connection as both ends see it when nothing sits between them.
+    const DIRECT: ChannelBinding = ChannelBinding {
+        client_static: [1u8; 32],
+        host_static: [2u8; 32],
+    };
+
+    /// Runs the client side of the hello, answering a code request with `code`.
+    fn hello(
+        channel: &mut ControlChannel,
+        identity: &DeviceIdentity,
+        code: Option<PairingCode>,
+    ) -> Result<ClientHello, SessionError> {
+        let mut answer = |_challenge: PairingChallenge| code;
+        client_hello(
+            channel,
+            identity,
+            &client_keys(),
+            &DIRECT,
+            Capabilities::H264,
+            &mut answer,
+        )
+    }
+
+    /// A host that trusts the client lets it in without asking for a code.
     #[test]
-    fn a_trusted_client_needs_no_code() {
+    fn a_trusted_client_is_asked_for_no_code() {
         let identity = DeviceIdentity::generate().expect("identity");
-        let (mut client, host) = hello_pair(vec![identity.public_bytes()], PairingMode::Refuse);
-        let mut answer = |_challenge: PairingChallenge| None;
-        let (_, _, paired) = client_hello(
+        let (mut client, host) =
+            hello_pair(vec![identity.public_bytes()], PairingMode::Prompt, DIRECT);
+        let mut answer = |_challenge: PairingChallenge| -> Option<PairingCode> {
+            panic!("a trusted client must not be asked for a code")
+        };
+        let hello = client_hello(
             &mut client,
             &identity,
             &client_keys(),
+            &DIRECT,
             Capabilities::H264,
             &mut answer,
         )
         .expect("client hello");
-        assert!(paired);
+        assert!(hello.paired);
+        assert!(!hello.pairing_confirmed);
         let authorised = host.join().expect("host thread").expect("host hello");
         assert_eq!(authorised.device_key, identity.public_bytes());
         assert!(!authorised.newly_paired);
     }
 
-    /// A host that does not trust the client refuses it.
+    /// A host that does not trust the client and does not prompt refuses it.
     #[test]
     fn an_untrusted_client_is_refused() {
         let identity = DeviceIdentity::generate().expect("identity");
-        let (mut client, host) = hello_pair(Vec::new(), PairingMode::Refuse);
-        let mut answer = |_challenge: PairingChallenge| Some(PairingCode::new(1));
-        let result = client_hello(
-            &mut client,
-            &identity,
-            &client_keys(),
-            Capabilities::H264,
-            &mut answer,
-        );
+        let (mut client, host) = hello_pair(Vec::new(), PairingMode::Refuse, DIRECT);
+        let result = hello(&mut client, &identity, Some(CODE));
         assert!(matches!(result, Err(SessionError::NotPaired)));
-        assert!(host.join().expect("host thread").is_err());
+        assert!(matches!(
+            host.join().expect("host thread"),
+            Err(SessionError::NotPaired)
+        ));
     }
 
-    /// A host that prompts pairs a client that answers with the right code.
+    /// A host that prompts pairs a client that knows the code, and proves it knows it too.
     #[test]
     fn the_right_code_pairs_the_client() {
         let identity = DeviceIdentity::generate().expect("identity");
-        let (mut client, host) = hello_pair(Vec::new(), PairingMode::Prompt);
-        let mut answer = |challenge: PairingChallenge| Some(challenge.code);
-        let (_, _, paired) = client_hello(
-            &mut client,
-            &identity,
-            &client_keys(),
-            Capabilities::H264,
-            &mut answer,
-        )
-        .expect("client hello");
-        assert!(paired);
+        let (mut client, host) = hello_pair(Vec::new(), PairingMode::Prompt, DIRECT);
+        let hello = hello(&mut client, &identity, Some(CODE)).expect("client hello");
+        assert!(hello.paired);
+        assert!(hello.pairing_confirmed);
         let authorised = host.join().expect("host thread").expect("host hello");
         assert!(authorised.newly_paired);
         assert_eq!(authorised.device_key, identity.public_bytes());
     }
 
-    /// A host that prompts turns away a client that answers with a wrong code.
+    /// A host that prompts turns away a client with a wrong code, or with none.
     #[test]
-    fn a_wrong_code_is_refused() {
+    fn a_wrong_or_missing_code_is_refused() {
+        for code in [Some(PairingCode::new(999_999)), None] {
+            let identity = DeviceIdentity::generate().expect("identity");
+            let (mut client, host) = hello_pair(Vec::new(), PairingMode::Prompt, DIRECT);
+            let result = hello(&mut client, &identity, code);
+            assert!(matches!(result, Err(SessionError::NotPaired)));
+            assert!(matches!(
+                host.join().expect("host thread"),
+                Err(SessionError::PairingRefused)
+            ));
+        }
+    }
+
+    /// A relay between the two ends holds two connections. Even with the right code, the
+    /// client's proof is bound to the connection it sees, so the host refuses it.
+    #[test]
+    fn a_relay_with_the_right_code_cannot_pair() {
         let identity = DeviceIdentity::generate().expect("identity");
-        let (mut client, host) = hello_pair(Vec::new(), PairingMode::Prompt);
-        let mut answer = |_challenge: PairingChallenge| Some(PairingCode::new(999_999));
-        let result = client_hello(
-            &mut client,
-            &identity,
-            &client_keys(),
-            Capabilities::H264,
-            &mut answer,
-        );
+        let host_view = ChannelBinding {
+            client_static: [3u8; 32],
+            ..DIRECT
+        };
+        let (mut client, host) = hello_pair(Vec::new(), PairingMode::Prompt, host_view);
+        let result = hello(&mut client, &identity, Some(CODE));
         assert!(matches!(result, Err(SessionError::NotPaired)));
-        assert!(host.join().expect("host thread").is_err());
+        assert!(matches!(
+            host.join().expect("host thread"),
+            Err(SessionError::NotPaired)
+        ));
     }
 
     /// A client that claims a trusted key but cannot prove it is refused.
@@ -662,7 +777,7 @@ mod tests {
     fn a_client_that_cannot_prove_its_identity_is_refused() {
         let claimed = [7u8; 32];
         let liar = DeviceIdentity::generate().expect("identity");
-        let (mut client, host) = hello_pair(vec![claimed], PairingMode::Prompt);
+        let (mut client, host) = hello_pair(vec![claimed], PairingMode::Prompt, DIRECT);
 
         client
             .send(&ControlMessage::Hello {
@@ -678,13 +793,79 @@ mod tests {
             panic!("expected a pairing challenge");
         };
         // The signature is made with the wrong key.
-        let signature = liar.sign_bytes(&pairing_proof(&nonce, &host_key, &claimed));
+        let signature = liar.sign_bytes(&pairing_proof(&nonce, &host_key, &claimed, &DIRECT));
         client
-            .send(&ControlMessage::PairingResponse { code: 0, signature })
+            .send(&ControlMessage::PairingResponse {
+                signature,
+                pake: [0u8; PAKE_MESSAGE_LEN],
+                confirm: [0u8; 32],
+            })
             .expect("response");
 
         let result = host.join().expect("host thread");
         assert!(matches!(result, Err(SessionError::NotPaired)));
+    }
+
+    /// A host that names a key it cannot sign with is refused, so a client never pins it.
+    #[test]
+    fn a_host_that_cannot_prove_its_key_is_refused() {
+        let identity = DeviceIdentity::generate().expect("identity");
+        let named = DeviceIdentity::generate()
+            .expect("named host")
+            .public_bytes();
+        let liar = DeviceIdentity::generate().expect("liar");
+        let mut client = fake_host(CODE, liar, named);
+        let result = hello(&mut client, &identity, Some(CODE));
+        assert!(matches!(result, Err(SessionError::HostProof)));
+    }
+
+    /// A host must prove it knows the code: one that does not is refused, even when it
+    /// signs with its own key.
+    #[test]
+    fn a_host_that_does_not_know_the_code_is_refused() {
+        for (host_code, accepted) in [(CODE, true), (PairingCode::new(1), false)] {
+            let identity = DeviceIdentity::generate().expect("identity");
+            let host = DeviceIdentity::generate().expect("host");
+            let key = host.public_bytes();
+            let mut client = fake_host(host_code, host, key);
+            let result = hello(&mut client, &identity, Some(CODE));
+            if accepted {
+                assert!(result.expect("the host knows the code").pairing_confirmed);
+            } else {
+                assert!(matches!(result, Err(SessionError::HostProof)));
+            }
+        }
+    }
+
+    /// A host that runs the pairing exchange with `code`, names `host_key`, signs with
+    /// `signer`, and always says the client is paired.
+    fn fake_host(code: PairingCode, signer: DeviceIdentity, host_key: [u8; 32]) -> ControlChannel {
+        let (client, mut host) = channel_pair();
+        std::thread::spawn(move || {
+            let Ok(ControlMessage::Hello { device_key, .. }) = host.recv() else {
+                return;
+            };
+            let (pake, message) = PairingPake::start(Role::Responder, code, &DIRECT);
+            let _ = host.send(&ControlMessage::PairingChallenge {
+                host_key,
+                nonce: [0u8; 32],
+                pake: message,
+            });
+            let Ok(ControlMessage::PairingResponse { pake: theirs, .. }) = host.recv() else {
+                return;
+            };
+            let confirm = pake.finish(&theirs).map_or([0u8; 32], |c| c.host);
+            let _ = host.send(&ControlMessage::HelloAck {
+                version: VERSION,
+                capabilities: Capabilities::H264,
+                session_id: client_keys().session_id,
+                paired: true,
+                host_key,
+                confirm,
+                signature: signer.sign_bytes(&host_proof(&host_key, &device_key, &DIRECT)),
+            });
+        });
+        client
     }
 
     /// The keys both ends of the pairing tests use.
@@ -692,15 +873,8 @@ mod tests {
         SessionKeys::derive(b"pairing-test")
     }
 
-    /// A connected pair of control channels over one TCP connection, with the
-    /// host side already running `host_hello` on its own thread.
-    fn hello_pair(
-        trusted: Vec<[u8; 32]>,
-        mode: PairingMode,
-    ) -> (
-        ControlChannel,
-        std::thread::JoinHandle<Result<Authorised, SessionError>>,
-    ) {
+    /// A connected pair of encrypted control channels over one TCP connection: client, host.
+    fn channel_pair() -> (ControlChannel, ControlChannel) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind control");
         let addr = listener.local_addr().expect("control addr");
         let client_stream = TcpStream::connect(addr).expect("connect control");
@@ -712,17 +886,31 @@ mod tests {
         client.set_cipher(send, recv);
         let (send, recv) = control_ciphers(&client_keys(), Role::Responder, SESSION_AEAD);
         host.set_cipher(send, recv);
+        (client, host)
+    }
 
+    /// The client end of a channel pair whose host end already runs `host_hello` on its own
+    /// thread, with `binding` as the host sees the connection.
+    fn hello_pair(
+        trusted: Vec<[u8; 32]>,
+        mode: PairingMode,
+        binding: ChannelBinding,
+    ) -> (
+        ControlChannel,
+        std::thread::JoinHandle<Result<Authorised, SessionError>>,
+    ) {
+        let (client, mut host) = channel_pair();
         let policy = PairingPolicy {
-            host_public: [9u8; 32],
+            identity: DeviceIdentity::generate().expect("host identity"),
             trusted,
             mode,
-            client_nonce: [5u8; 32],
+            code: CODE,
             code_file: None,
         };
         let keys = client_keys();
-        let handle =
-            std::thread::spawn(move || host_hello(&mut host, &keys, Capabilities::H264, &policy));
+        let handle = std::thread::spawn(move || {
+            host_hello(&mut host, &keys, &binding, Capabilities::H264, &policy)
+        });
         (client, handle)
     }
 }

@@ -1,7 +1,12 @@
-//! uinput injection: five virtual devices, created through the `evdev` crate's safe uinput API.
+//! uinput injection: the virtual devices, created through the `evdev` crate's safe uinput API.
 //!
 //! Absolute axes are set with `UI_ABS_SETUP`, so their range is exactly the client resolution. The
 //! compositor then maps that range onto the host screen.
+//!
+//! The keyboard, the pointer and the absolute pointer are one device set ([`UinputInjector`]), and
+//! the touch and the pen are another ([`UinputTouch`]): a host that injects its pointer through
+//! the compositor still needs the touch and the pen in the kernel, because no compositor protocol
+//! carries them.
 
 use std::fmt;
 use std::io::ErrorKind;
@@ -13,9 +18,10 @@ use evdev::{
     SynchronizationEvent, UinputAbsSetup,
 };
 use lumen_input_wayland::{InputEvent, InputEventKind, PIXELS_PER_NOTCH};
+use lumen_protocol::input::TouchPhase;
 
 use crate::text::{KEY_LEFTSHIFT, for_each_tap};
-use crate::{InputInjector, Residual};
+use crate::{InputInjector, Residual, TouchInjector};
 
 /// Highest evdev keycode the virtual keyboard accepts.
 const KEY_MAX: u16 = 248;
@@ -26,30 +32,17 @@ const TOUCH_SLOTS: u8 = 10;
 /// Largest pen pressure value.
 const PEN_PRESSURE_MAX: u16 = 4095;
 
-/// Phase of one touch contact.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TouchPhase {
-    Down,
-    Motion,
-    Up,
-}
-
-/// Injects through five uinput devices: keyboard, relative pointer, absolute pointer, touch and
-/// pen.
+/// Injects through three virtual devices: keyboard, relative pointer and absolute pointer.
 pub struct UinputInjector {
     keyboard: VirtualDevice,
     pointer: VirtualDevice,
     absolute: VirtualDevice,
-    touch: VirtualDevice,
-    pen: VirtualDevice,
     max_x: i32,
     max_y: i32,
     rel_x: Residual,
     rel_y: Residual,
     wheel_v: Residual,
     wheel_h: Residual,
-    /// Bit `n` is set while touch slot `n` is down.
-    touch_mask: u16,
 }
 
 impl fmt::Debug for UinputInjector {
@@ -74,81 +67,13 @@ impl UinputInjector {
             keyboard: keyboard_device()?,
             pointer: pointer_device()?,
             absolute: absolute_device(max_x, max_y)?,
-            touch: touch_device(max_x, max_y)?,
-            pen: pen_device(max_x, max_y)?,
             max_x,
             max_y,
             rel_x: Residual::default(),
             rel_y: Residual::default(),
             wheel_v: Residual::default(),
             wheel_h: Residual::default(),
-            touch_mask: 0,
         })
-    }
-
-    /// Touch contact `slot` (0 to 9) at client-surface coordinates `(x, y)`.
-    pub fn touch(&mut self, slot: u8, phase: TouchPhase, x: f64, y: f64) -> Result<(), String> {
-        if slot >= TOUCH_SLOTS {
-            return Err(format!("touch slot {slot} out of range 0..{TOUCH_SLOTS}"));
-        }
-        let (px, py) = (clamp_round(x, self.max_x), clamp_round(y, self.max_y));
-        let bit = 1u16 << slot;
-        let id = i32::from(slot) + 1;
-        let slot = i32::from(slot);
-        match phase {
-            TouchPhase::Down => {
-                self.touch_mask |= bit;
-                emit(
-                    &mut self.touch,
-                    &[
-                        abs(AbsoluteAxisCode::ABS_MT_SLOT, slot),
-                        abs(AbsoluteAxisCode::ABS_MT_TRACKING_ID, id),
-                        abs(AbsoluteAxisCode::ABS_MT_POSITION_X, px),
-                        abs(AbsoluteAxisCode::ABS_MT_POSITION_Y, py),
-                        key(KeyCode::BTN_TOUCH, 1),
-                        sync(),
-                    ],
-                )
-            }
-            TouchPhase::Motion => emit(
-                &mut self.touch,
-                &[
-                    abs(AbsoluteAxisCode::ABS_MT_SLOT, slot),
-                    abs(AbsoluteAxisCode::ABS_MT_POSITION_X, px),
-                    abs(AbsoluteAxisCode::ABS_MT_POSITION_Y, py),
-                    sync(),
-                ],
-            ),
-            TouchPhase::Up => {
-                self.touch_mask &= !bit;
-                emit(
-                    &mut self.touch,
-                    &[
-                        abs(AbsoluteAxisCode::ABS_MT_SLOT, slot),
-                        abs(AbsoluteAxisCode::ABS_MT_TRACKING_ID, -1),
-                        key(KeyCode::BTN_TOUCH, i32::from(self.touch_mask != 0)),
-                        sync(),
-                    ],
-                )
-            }
-        }
-    }
-
-    /// Pen sample at client-surface coordinates `(x, y)`. `pressure` is `0..=4095`. `in_range`
-    /// means the pen is near the surface.
-    pub fn pen(&mut self, x: f64, y: f64, pressure: u16, in_range: bool) -> Result<(), String> {
-        let pressure = pressure.min(PEN_PRESSURE_MAX);
-        emit(
-            &mut self.pen,
-            &[
-                abs(AbsoluteAxisCode::ABS_X, clamp_round(x, self.max_x)),
-                abs(AbsoluteAxisCode::ABS_Y, clamp_round(y, self.max_y)),
-                abs(AbsoluteAxisCode::ABS_PRESSURE, i32::from(pressure)),
-                key(KeyCode::BTN_TOOL_PEN, i32::from(in_range)),
-                key(KeyCode::BTN_TOUCH, i32::from(pressure > 0)),
-                sync(),
-            ],
-        )
     }
 
     fn key(&mut self, keycode: u32, pressed: bool) -> Result<(), String> {
@@ -238,6 +163,108 @@ impl InputInjector for UinputInjector {
 
     fn inject_text(&mut self, text: &str) -> Result<(), String> {
         for_each_tap(text, |code, shift| self.tap(code, shift))
+    }
+}
+
+/// The touch and the pen of one session, as two virtual devices.
+pub struct UinputTouch {
+    touch: VirtualDevice,
+    pen: VirtualDevice,
+    max_x: i32,
+    max_y: i32,
+    /// Bit `n` is set while touch slot `n` is down.
+    touch_mask: u16,
+}
+
+impl fmt::Debug for UinputTouch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UinputTouch")
+            .field("max_x", &self.max_x)
+            .field("max_y", &self.max_y)
+            .finish_non_exhaustive()
+    }
+}
+
+impl UinputTouch {
+    /// Creates the touch and the pen. `width` and `height` are the client resolution, and the
+    /// absolute axes span `0..width` and `0..height`.
+    ///
+    /// Fails with a message that names `/dev/uinput` when the device cannot be opened. That needs
+    /// root or membership in the group that owns the node.
+    pub fn new(width: u32, height: u32) -> Result<Self, String> {
+        let max_x = i32::try_from(width.max(1) - 1).map_err(|e| format!("width: {e}"))?;
+        let max_y = i32::try_from(height.max(1) - 1).map_err(|e| format!("height: {e}"))?;
+        Ok(Self {
+            touch: touch_device(max_x, max_y)?,
+            pen: pen_device(max_x, max_y)?,
+            max_x,
+            max_y,
+            touch_mask: 0,
+        })
+    }
+}
+
+impl TouchInjector for UinputTouch {
+    fn touch(&mut self, slot: u8, phase: TouchPhase, x: f64, y: f64) -> Result<(), String> {
+        if slot >= TOUCH_SLOTS {
+            return Err(format!("touch slot {slot} out of range 0..{TOUCH_SLOTS}"));
+        }
+        let (px, py) = (clamp_round(x, self.max_x), clamp_round(y, self.max_y));
+        let bit = 1u16 << slot;
+        let id = i32::from(slot) + 1;
+        let slot = i32::from(slot);
+        match phase {
+            TouchPhase::Down => {
+                self.touch_mask |= bit;
+                emit(
+                    &mut self.touch,
+                    &[
+                        abs(AbsoluteAxisCode::ABS_MT_SLOT, slot),
+                        abs(AbsoluteAxisCode::ABS_MT_TRACKING_ID, id),
+                        abs(AbsoluteAxisCode::ABS_MT_POSITION_X, px),
+                        abs(AbsoluteAxisCode::ABS_MT_POSITION_Y, py),
+                        key(KeyCode::BTN_TOUCH, 1),
+                        sync(),
+                    ],
+                )
+            }
+            TouchPhase::Motion => emit(
+                &mut self.touch,
+                &[
+                    abs(AbsoluteAxisCode::ABS_MT_SLOT, slot),
+                    abs(AbsoluteAxisCode::ABS_MT_POSITION_X, px),
+                    abs(AbsoluteAxisCode::ABS_MT_POSITION_Y, py),
+                    sync(),
+                ],
+            ),
+            TouchPhase::Up => {
+                self.touch_mask &= !bit;
+                emit(
+                    &mut self.touch,
+                    &[
+                        abs(AbsoluteAxisCode::ABS_MT_SLOT, slot),
+                        abs(AbsoluteAxisCode::ABS_MT_TRACKING_ID, -1),
+                        key(KeyCode::BTN_TOUCH, i32::from(self.touch_mask != 0)),
+                        sync(),
+                    ],
+                )
+            }
+        }
+    }
+
+    fn pen(&mut self, x: f64, y: f64, pressure: u16, in_range: bool) -> Result<(), String> {
+        let pressure = pressure.min(PEN_PRESSURE_MAX);
+        emit(
+            &mut self.pen,
+            &[
+                abs(AbsoluteAxisCode::ABS_X, clamp_round(x, self.max_x)),
+                abs(AbsoluteAxisCode::ABS_Y, clamp_round(y, self.max_y)),
+                abs(AbsoluteAxisCode::ABS_PRESSURE, i32::from(pressure)),
+                key(KeyCode::BTN_TOOL_PEN, i32::from(in_range)),
+                key(KeyCode::BTN_TOUCH, i32::from(pressure > 0)),
+                sync(),
+            ],
+        )
     }
 }
 

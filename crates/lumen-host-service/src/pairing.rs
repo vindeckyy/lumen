@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use lumen_crypto::{DeviceIdentity, KEY_LEN, PairingCode};
+use lumen_crypto::{DeviceIdentity, KEY_LEN};
 use serde::{Deserialize, Serialize};
 
 /// Errors from the pairing store.
@@ -157,13 +157,10 @@ impl PairingStore {
         self.clients.clone()
     }
 
-    /// The pairing code the host shows for one handshake attempt.
-    ///
-    /// The code is bound to the client's Noise static key, so it is valid
-    /// only for that one attempt.
+    /// The host's identity, which signs the answers of every session.
     #[must_use]
-    pub fn challenge(&self, client_nonce: &[u8; 32]) -> PairingCode {
-        PairingCode::derive(&self.public_bytes(), client_nonce)
+    pub fn identity(&self) -> &DeviceIdentity {
+        &self.identity
     }
 
     /// Write the store to its file.
@@ -186,11 +183,7 @@ impl PairingStore {
             path: self.path.clone(),
             reason: e.to_string(),
         })?;
-        std::fs::write(&self.path, format!("{text}\n")).map_err(|source| PairingError::Io {
-            path: self.path.clone(),
-            source,
-        })?;
-        restrict_permissions(&self.path);
+        write_owner_only(&self.path, format!("{text}\n").as_bytes())?;
         Ok(())
     }
 }
@@ -221,12 +214,38 @@ pub fn load_identity(path: &Path) -> Result<DeviceIdentity, PairingError> {
             source,
         })?;
     }
-    std::fs::write(path, hex_encode(&identity.to_bytes())).map_err(|source| PairingError::Io {
+    write_owner_only(path, hex_encode(&identity.to_bytes()).as_bytes())?;
+    Ok(identity)
+}
+
+/// Write a file that only its owner may read, atomically.
+///
+/// The contents go to a temporary file in the same directory, which is renamed over the target
+/// afterwards: a crash halfway through leaves the old file, not a half-written one. The mode is
+/// set before the rename, so the secret is never briefly readable by others.
+pub(crate) fn write_owner_only(path: &Path, contents: &[u8]) -> Result<(), PairingError> {
+    let directory = path.parent().unwrap_or_else(|| Path::new("."));
+    let name = path.file_name().map_or_else(
+        || "lumen-secret".to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    let temporary = directory.join(format!(".{name}.tmp.{}", std::process::id()));
+    let io = |source| PairingError::Io {
         path: path.to_path_buf(),
         source,
-    })?;
-    restrict_permissions(path);
-    Ok(identity)
+    };
+    let result = (|| -> std::io::Result<()> {
+        let mut file = std::fs::File::create(&temporary)?;
+        restrict_permissions(&temporary);
+        std::io::Write::write_all(&mut file, contents)?;
+        file.sync_all()?;
+        std::fs::rename(&temporary, path)
+    })();
+    if let Err(source) = result {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(io(source));
+    }
+    Ok(())
 }
 
 /// Make a file readable and writable by its owner only.
@@ -304,17 +323,6 @@ mod tests {
     }
 
     #[test]
-    fn the_challenge_depends_on_the_client_nonce() {
-        let path = temp_path("challenge");
-        let store = PairingStore::load(&path).expect("create the store");
-        let a = store.challenge(&[1u8; 32]);
-        let b = store.challenge(&[2u8; 32]);
-        assert_ne!(a, b);
-        assert_eq!(a, store.challenge(&[1u8; 32]));
-        let _ = std::fs::remove_dir_all(path.parent().unwrap());
-    }
-
-    #[test]
     fn hex_roundtrips() {
         let bytes = [0u8, 1, 15, 16, 255];
         let text = hex_encode(&bytes);
@@ -322,5 +330,44 @@ mod tests {
         assert_eq!(hex_decode(&text).unwrap(), bytes);
         assert!(hex_decode("0f0").is_none());
         assert!(hex_decode("zz").is_none());
+    }
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("lumen-pairing-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        dir
+    }
+
+    #[test]
+    fn a_secret_file_is_owner_only_and_complete() {
+        let dir = temp_dir("secret");
+        let path = dir.join("store.json");
+        write_owner_only(&path, b"{\"a\": 1}\n").expect("write");
+        assert_eq!(std::fs::read(&path).unwrap(), b"{\"a\": 1}\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "the file is owner-only");
+        }
+        // No temporary file is left behind.
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().contains("tmp"))
+            .collect();
+        assert!(leftovers.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_second_write_replaces_the_file() {
+        let dir = temp_dir("replace");
+        let path = dir.join("store.json");
+        write_owner_only(&path, b"first\n").expect("write");
+        write_owner_only(&path, b"second\n").expect("write");
+        assert_eq!(std::fs::read(&path).unwrap(), b"second\n");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

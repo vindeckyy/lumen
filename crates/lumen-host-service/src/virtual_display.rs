@@ -367,6 +367,94 @@ fn set_private(path: &Path) -> Result<(), io::Error> {
     std::fs::set_permissions(path, permissions)
 }
 
+/// A headless output added to the sway session the host runs in, so the client gets a display
+/// of its own size inside the user's real session, where its windows open.
+///
+/// The steps are punktfunk's wlroots backend (`pf-vdisplay/src/vdisplay/linux/wlroots.rs`,
+/// MIT OR Apache-2.0, Copyright (c) 2026 unom - Enrico Bühler): `create_output`, the new name
+/// read from the difference of the output lists, a custom mode (a headless output without a
+/// mode has no refresh clock and produces no frames), and `unplug` when it is dropped. Sway
+/// adds headless outputs only when its headless backend is loaded, as in a headless session or
+/// with `WLR_BACKENDS=drm,headless,libinput`.
+#[derive(Debug)]
+pub struct SessionOutput {
+    name: String,
+}
+
+impl SessionOutput {
+    /// Adds an output of `width`x`height` at `refresh_hz` to the running sway.
+    ///
+    /// # Errors
+    /// Returns why sway refused, or that no new output appeared.
+    pub fn create(width: u32, height: u32, refresh_hz: u32) -> Result<Self, String> {
+        if width == 0 || height == 0 || refresh_hz == 0 {
+            return Err("the virtual output needs a non-zero size and refresh rate".into());
+        }
+        let before = output_names()?;
+        swaymsg(&["create_output"])?;
+        let name = output_names()?
+            .into_iter()
+            .find(|name| !before.contains(name))
+            .ok_or("sway added no output: is its headless backend loaded?")?;
+        // From here on the output exists, so a failure unplugs it through Drop.
+        let output = Self { name };
+        // `--` keeps swaymsg from reading `--custom` as one of its own options.
+        swaymsg(&[
+            "--",
+            "output",
+            &output.name,
+            "mode",
+            "--custom",
+            &format!("{width}x{height}@{refresh_hz}Hz"),
+        ])?;
+        Ok(output)
+    }
+
+    /// The output's name, which the capture selects with `--output`.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl Drop for SessionOutput {
+    fn drop(&mut self) {
+        if let Err(e) = swaymsg(&["output", &self.name, "unplug"]) {
+            crate::host_log!(warn "lumen-host: cannot remove the output {}: {e}", self.name);
+        }
+    }
+}
+
+/// Runs `swaymsg` with `args`; sway finds the session through `SWAYSOCK`.
+fn swaymsg(args: &[&str]) -> Result<String, String> {
+    let out = Command::new("swaymsg")
+        .args(args)
+        .output()
+        .map_err(|e| format!("swaymsg: {e}"))?;
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    // swaymsg exits 0 even when a command fails and reports `"success": false`.
+    if !out.status.success() || text.contains("\"success\": false") {
+        return Err(format!(
+            "swaymsg {}: {}{}",
+            args.join(" "),
+            text.trim(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(text)
+}
+
+/// The names of sway's outputs.
+fn output_names() -> Result<Vec<String>, String> {
+    let json = swaymsg(&["-r", "-t", "get_outputs"])?;
+    let outputs: Vec<serde_json::Value> =
+        serde_json::from_str(&json).map_err(|e| format!("sway's output list: {e}"))?;
+    Ok(outputs
+        .iter()
+        .filter_map(|o| o.get("name")?.as_str().map(str::to_owned))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

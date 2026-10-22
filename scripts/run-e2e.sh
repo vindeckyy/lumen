@@ -57,7 +57,8 @@ Options:
   --help               Print this text
 
 The environment variables MODE, SIZE, FPS, DURATION, OUT, OUT_DIR, HOST_NS and
-CLIENT_NS set the same things. The flags win.
+CLIENT_NS set the same things. The flags win. ENCODER (vaapi or nvenc) picks the
+host's encoder.
 EOF
 }
 
@@ -234,6 +235,10 @@ if [ "$WITH_AUDIO" = "1" ]; then
   HOST_EXTRA_FLAGS+=(--with-audio --audio "$HOST_IP:$AUDIO_PORT" --client-audio-port "$CLIENT_AUDIO_PORT")
   CLIENT_EXTRA_FLAGS+=(--with-audio --audio-bind "$CLIENT_IP:$CLIENT_AUDIO_PORT")
   log "the session carries audio on port $CLIENT_AUDIO_PORT"
+fi
+if [ -n "${ENCODER:-}" ]; then
+  HOST_EXTRA_FLAGS+=(--encoder "$ENCODER")
+  log "the host encodes with $ENCODER"
 fi
 if [ "$WITH_CLIPBOARD" = "1" ]; then
   HOST_EXTRA_FLAGS+=(--clipboard-test "lumen clipboard round trip")

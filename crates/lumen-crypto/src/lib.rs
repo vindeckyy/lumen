@@ -19,5 +19,7 @@ pub use error::CryptoError;
 pub use handshake::{Handshake, HandshakeResult, Role};
 pub use keys::{CONTROL_C2H_INFO, CONTROL_H2C_INFO, MEDIA_C2H_INFO, MEDIA_H2C_INFO, SessionKeys};
 pub use pairing::{
-    DeviceIdentity, KEY_LEN, PairedClient, PairingCode, SIGNATURE_LEN, pairing_proof, random_bytes,
+    ChannelBinding, Confirmations, DeviceIdentity, KEY_LEN, PAKE_MESSAGE_LEN, PairedClient,
+    PairingCode, PairingPake, SIGNATURE_LEN, confirmation_matches, host_proof, pairing_proof,
+    random_bytes,
 };

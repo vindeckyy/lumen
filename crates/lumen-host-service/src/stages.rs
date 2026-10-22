@@ -329,26 +329,6 @@ impl StageSamples {
     }
 }
 
-/// Estimate the offset between the client clock and the host clock.
-///
-/// The host sent a ping at `t0` on its own clock, the client answered at `t1`
-/// on its clock, and the host received the answer at `t2` on its clock. The
-/// client's clock at the midpoint of the exchange is `(t0 + t2) / 2` on the
-/// host's clock, so the offset is `t1 - (t0 + t2) / 2`.
-///
-/// The estimate assumes the two directions take the same time. On a LAN the
-/// error is well under a millisecond.
-#[must_use]
-pub fn estimate_offset(t0_host_us: u64, t1_client_us: u64, t2_host_us: u64) -> i64 {
-    let midpoint = i64::try_from(t0_host_us)
-        .unwrap_or(i64::MAX)
-        .saturating_add(i64::try_from(t2_host_us).unwrap_or(i64::MAX))
-        / 2;
-    i64::try_from(t1_client_us)
-        .unwrap_or(i64::MAX)
-        .saturating_sub(midpoint)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,15 +344,6 @@ mod tests {
             1_011_000 + shift,
             1_013_000 + shift,
         );
-    }
-
-    #[test]
-    fn the_offset_of_identical_clocks_is_zero() {
-        // The client answered at the midpoint of the host's exchange, so the
-        // two clocks agree.
-        assert_eq!(estimate_offset(1_000_000, 1_000_500, 1_001_000), 0);
-        // The client clock runs 10 ms ahead of the host clock.
-        assert_eq!(estimate_offset(1_000_000, 1_010_500, 1_001_000), 10_000);
     }
 
     #[test]

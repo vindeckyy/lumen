@@ -22,7 +22,7 @@ The media peer address is not negotiated. The host sends media to the IP address
 ## 2. Versioning and capability negotiation
 
 1. The client opens the control connection and sends `Hello { version, capabilities: u64, device_key: [u8;32] }`.
-2. The host replies `HelloAck { version, capabilities: u64, session_id: u32, paired: bool }`.
+2. The host replies `HelloAck { version, capabilities: u64, session_id: u32, paired: bool, host_key: [u8; 32], confirm: [u8; 32], signature: [u8; 64] }`. The host key is the host's Ed25519 public key, and the signature proves the host owns it on this connection, so the client can pin the host it paired with. See section 6.
 3. The negotiated version is `min(client.version, host.version)` and must be in the list of versions both builds support.
 4. The negotiated capability set is the bitwise AND of the two bitmaps. A session whose intersection is empty is rejected.
 5. Unknown capability bits are ignored on receive (forward compatibility) but rejected by `Capabilities::from_bits_strict` when a build explicitly validates a bitmap.
@@ -157,18 +157,13 @@ pipeline_latency = client_present_time - (capture_timestamp + clock_offset)
 
 ## 4. FEC
 
-Video access units are grouped into FEC blocks of 8 data slices. Each block carries 2 parity slices, computed over GF(2^8) with the primitive polynomial `x^8 + x^4 + x^3 + x^2 + 1` (0x11D):
-
-- `parity[0]` = the GF(256) sum of all 8 data slices (bytewise, zero-padded to slice length).
-- `parity[1]` = the GF(256) sum of `(index + 1) * slice` over all data slices, where `*` is GF(256) multiplication.
-
-Two losses inside one block are therefore recoverable from parity alone, and any further loss inside the block is recovered by retransmission or dropped.
+Video access units are grouped into FEC blocks of 8 data slices (12 at the heavy level). The parity slices of a block are the Reed-Solomon recovery shards over GF(2^16) (Leopard-RS) that the `reed-solomon-simd` 3.x crate computes for `original_count` = the block's data-slice count and `recovery_count` = its parity count: 2 for a block of 8, 3 for a block of 12. Data slice `i` of the block is original shard `i`, parity slice `p` is recovery shard `p`. As many losses inside one block as it has parity slices are recoverable from parity alone; any further loss is recovered by retransmission or dropped.
 
 Parity slices are sent as `VideoParity` packets. `aux` carries the block index; the parity slice index within the block is carried in `slice_index`.
 
 A block whose last data slice is short is padded with zero slices before the parity is computed, so the receiver can rebuild the same padded block.
 
-Parity ratio adapts to measured loss: no parity below 0.5 % measured loss, 2 per 8 below 2 %, 3 per 8 at or above 2 %. Total overhead is capped at 25 %. **Not implemented yet:** the shipped policy is fixed at 2 parity slices per block of 8. See `docs/design.md`, decision D35 and O-17.
+Parity ratio adapts to measured loss: no parity below 0.5 % measured loss, 2 per 8 below 2 %, 3 per 12 at or above 2 %. Total overhead is capped at 25 %. The block size travels in the `flags` word. See `docs/design.md`, decisions D59, D60 and D82.
 
 ## 5. Retransmission
 
@@ -205,15 +200,19 @@ Each key is used by exactly one sender, so the two directions of a channel never
 
 Nonces are 12 bytes: the 8-byte little-endian per-direction packet counter, then the 4-byte little-endian session id. Each direction starts its counter at zero under its own key, and the counter never repeats under one key.
 
-Pairing: the host stores an Ed25519 identity key. The client owns its own Ed25519 identity key. Every session begins with a pairing exchange on the control channel:
+Pairing: the host stores an Ed25519 identity key. The client owns its own Ed25519 identity key. Every session begins with a pairing exchange on the control channel. Everything in it is bound to the connection: the binding `B` is the client's Noise static public key followed by the host's, as each end saw them in the handshake. A third party in the middle runs one handshake with each end, with its own static keys, so the two ends then hold different `B`.
 
 1. The client sends `Hello { version, capabilities, device_key }`, where `device_key` is the client's Ed25519 public key.
-2. The host answers `PairingChallenge { code, host_key, nonce }`. `nonce` is 32 fresh random bytes.
-3. The client signs `b"lumen-pairing-proof-v1" || nonce || host_key || device_key` with its Ed25519 key and answers `PairingResponse { code, signature }`. `code` is the six digit code the user read on the host, or zero when the host already trusts the client.
+2. The host answers `PairingChallenge { host_key, nonce, pake }`. `nonce` is 32 fresh random bytes. When the host does not trust `device_key` and the pairing mode is `prompt`, the host draws a fresh random six digit code, shows it (log, `--pairing-code-file` with owner-only permissions, control plane), and `pake` is its SPAKE2 message over the code (Ed25519 group, side B, 33 bytes). The SPAKE2 identities are the client's and the host's Noise static keys and the password is the code as a little-endian `u32`. Otherwise `pake` is all zero and no code is asked for.
+3. The client signs `b"lumen-pairing-proof-v2" || nonce || host_key || device_key || B` with its Ed25519 key. When `pake` is not zero, the user types the code on the client; the client runs SPAKE2 side A with it and derives two confirmations from the shared key `K`: `HKDF-SHA256(K, info = label || B)` with the labels `lumen-pair-client` and `lumen-pair-host`. It answers `PairingResponse { signature, pake, confirm }` with its own SPAKE2 message and the client confirmation, or zeros when no code was asked for or typed.
 4. The host verifies the signature against `device_key`. A client that cannot prove it owns the key is refused.
-5. If the host trusts `device_key`, the host answers `HelloAck { ..., paired: true }`. Otherwise the host compares `code` with the code it derived from its own public key and the client's Noise static key. A match pairs the client, and the host adds its public key to the trust store. A mismatch is refused.
+5. If the host trusts `device_key`, the client is authorised. Otherwise, in `prompt` mode, the host finishes SPAKE2 with the client's message and compares the client confirmation in constant time. A match pairs the client, and the host adds its public key to the trust store. A wrong code, a missing one, or a third party in the middle gives a different key, so the confirmations disagree and the client is refused. In `refuse` mode an untrusted client is refused.
+6. The host answers `HelloAck`. `signature` is the host's Ed25519 signature over `b"lumen-host-proof-v1" || host_key || device_key || B`; `confirm` is the host confirmation when this session paired the client, zero otherwise.
+7. The client verifies the host signature against `host_key`, and, when it typed a code, the host confirmation. Either failing ends the session.
 
-The pairing code is `SHA-256(b"lumen-pairing-v1" || host_public_key || client_noise_static_key)` reduced modulo one million, so it is six digits and valid for one handshake attempt only. The trust store holds the host's private key and the public keys of the clients it trusts, in one file with owner-only permissions.
+The code never crosses the wire and is fresh for each connection. A relayed code is worth nothing, because of `B`, and an online guess is worth one in a million per connection; the host does not limit the rate of attempts (see `known-limits.md`). The trust store holds the host's private key and the public keys of the clients it trusts, in one file with owner-only permissions.
+
+The client pins the host: it keeps the host key next to its identity and refuses a session with a different host key. The first pin is only written after the host proved, in the same session, the code the user typed. A client with no pin that meets a host which trusts it already (its pin file was lost) is refused, and the host's operator removes the client from the trusted clients so it can pair again. This is the SPAKE2 pairing of punktfunk, with Noise static keys in the place of its certificate fingerprints.
 
 The control channel is encrypted from the first byte.
 
@@ -236,7 +235,7 @@ A message body is one kind byte followed by its fields in the order below. Integ
 | Kind | Message | Fields |
 |---|---|---|
 | 1 | `Hello` | version `u8`, capabilities `u64`, device key `[u8; 32]` |
-| 2 | `HelloAck` | version `u8`, capabilities `u64`, session id `u32`, paired `u8` (0 or 1) |
+| 2 | `HelloAck` | version `u8`, capabilities `u64`, session id `u32`, paired `u8` (0 or 1), host key `32` bytes, confirmation `32` bytes, signature `64` bytes |
 | 3 | `RequestIdr` | frame id `u32` |
 | 4 | `Nack` | frame id `u32`, count `u16`, then `count` slice indices `u16` |
 | 5 | `Monitor` | index, width, height, refresh Hz, each `u32` |
@@ -245,10 +244,19 @@ A message body is one kind byte followed by its fields in the order below. Integ
 | 8 | `Ping` | timestamp in microseconds `u64` |
 | 9 | `Pong` | timestamp in microseconds `u64`, reply timestamp in microseconds `u64` |
 | 10 | `Bye` | none |
-| 11 | `PairingChallenge` | code `u32`, host key `[u8; 32]`, nonce `[u8; 32]` |
-| 12 | `PairingResponse` | code `u32`, signature `[u8; 64]` |
+| 11 | `PairingChallenge` | host key `[u8; 32]`, nonce `[u8; 32]`, SPAKE2 message `[u8; 33]` |
+| 12 | `PairingResponse` | signature `[u8; 64]`, SPAKE2 message `[u8; 33]`, confirmation `[u8; 32]` |
 | 14 | `LinkFeedback` | slices received `u64`, slices lost `u64`, round trip time `u64` microseconds |
 | 13 | `StageTimes` | frame id `u32`, recv `u64`, decode start `u64`, decode `u64`, present `u64` |
+| 16 | `Recover` | last good frame id `u32` |
+| 17 | `Cursor` | serial `u32`, hotspot x `u16`, hotspot y `u16`, width `u16`, height `u16`, then `width * height` premultiplied ARGB pixels, each a little-endian `u32` |
+| 18 | `Rumble` | pad `u8`, strong motor `u8`, weak motor `u8` |
+
+`Recover` is how the client answers a frame it cannot decode because its reference was lost. It names the newest frame it decoded. When the encoder still holds that frame as a reference (up to eight frames, fewer at large sizes), its next P picture predicts from it instead of from the lost frames, and the host puts a recovery point SEI (payload type 6, `recovery_frame_cnt` 0, `exact_match_flag` 1) before its first slice. Every picture encoded since the named frame is distrusted and never anchors a later recovery. The SPS sets `gaps_in_frame_num_value_allowed_flag`, and the client infers the lost `frame_num`s as non-existing frames (H.264 8.2.5.2), which keeps the reference windows of both ends equal. The client refuses frames until an IDR or a recovery point arrives. A host that no longer holds the frame sends an IDR. A client that has decoded nothing yet sends `RequestIdr`, and a client whose request went unanswered for 250 ms asks for an IDR.
+
+`Cursor` carries the host's cursor shape when the capture reports it apart from the frames, which is the X11 capture today. The host sends a shape once per serial. The client shows it as its own window cursor, so the pointer moves without waiting for the network. A width of 0 hides the cursor.
+
+`Rumble` is the host telling the client what the game asked of a virtual pad's motors: the strong (low-frequency) and the weak (high-frequency) motor, 0 to 255, for the pad with that index. The client plays them on the pad of its own machine that drives that slot. The host sends a level when it changes and renews a held level every 250 ms, so the client keeps playing it and notices a link that died. A level of zero for both motors stops the rumble.
 
 `LinkFeedback` is the client telling the host what the link did. The counts are cumulative, so the host differences them against the previous report. The host's bandwidth and parity policies read it: the loss decides the parity level, the round trip time and the loss decide the target bitrate.
 
@@ -293,8 +301,14 @@ Integers are little-endian. A boolean is one byte, 0 or 1. Coordinates and delta
 | 3 | Motion, absolute | x f64, y f64 (client-surface pixels) |
 | 4 | Button | button u32 (evdev code), pressed bool |
 | 5 | Scroll | dx f64, dy f64 (logical pixels) |
+| 6 | Gamepad | pad u8 (0 to 3), buttons u16, lx i16, ly i16, rx i16, ry i16, lt u8, rt u8 |
+| 7 | Gamepad removed | pad u8 (0 to 3) |
+| 8 | Touch | slot u8 (0 to 9), phase u8 (0 down, 1 motion, 2 up), x f64, y f64 |
+| 9 | Pen | x f64, y f64, pressure u16 (0 to 4095), in range bool |
 
-Touch, pen, gamepad axis and gamepad button are not defined yet. Each will take a kind number when a client sends it. Until then a receiver treats them as unknown kinds.
+A `Gamepad` event is the whole state of one pad, sent on every change and again every 100 ms, so a lost datagram costs one repeat at most. Buttons are XInput bits: d-pad up `0x0001`, down `0x0002`, left `0x0004`, right `0x0008`, start `0x0010`, back `0x0020`, left stick `0x0040`, right stick `0x0080`, left shoulder `0x0100`, right shoulder `0x0200`, guide `0x0400`, A (bottom) `0x1000`, B (right) `0x2000`, X (left) `0x4000`, Y (top) `0x8000`. Sticks run from -32768 to 32767 with right and up positive; triggers run from 0 to 255. A pad index of 4 or more is malformed. The host gives each pad index its own virtual DualSense and removes it on `Gamepad removed` or when the session ends.
+
+Touch and pen coordinates are a fraction of the client's screen, from 0 (left or top edge) to 1 (right or bottom edge), so a contact lands on the same spot of the capture whatever picture size the client is shown. The host injects them into a virtual touchscreen and a virtual pen made through uinput, with axes the size of the capture. A slot of 10 or more, an unknown phase or a non-finite coordinate is malformed.
 
 ### 8.3 Receiver rules
 
@@ -305,7 +319,7 @@ The receiver checks each datagram in this order and drops it at the first failur
 3. Tag does not verify: dropped and counted as an authentication failure.
 4. Plaintext malformed: unknown kind, truncated, trailing bytes, boolean not 0 or 1, non-finite float, or stamp sequence differing from the header. Dropped and counted as malformed.
 5. Replay: a sequence already accepted, or 64 or more behind the newest accepted, is dropped and counted. The window only moves after steps 3 and 4 pass, so forged datagrams cannot move it. Reordering within the window is accepted.
-6. The event is injected before the next datagram is read. No queue sits between the socket and the injector, so input never waits behind other input.
+6. The event is injected before the next datagram is read. No queue sits between the socket and the injector, so input never waits behind other input. Gamepad events go to the virtual pads instead of the keyboard and pointer injector.
 
 The AEAD and the replay window give integrity and freshness within a session. Client identity comes from pairing in section 6, not from this layer.
 

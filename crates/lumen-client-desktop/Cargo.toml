@@ -12,6 +12,7 @@ description = "Lumen desktop client."
 [dependencies]
 lumen-protocol = { workspace = true }
 lumen-transport = { workspace = true }
+lumen-drm = { workspace = true }
 lumen-crypto = { workspace = true }
 lumen-audio = { workspace = true }
 lumen-host-service = { workspace = true }
@@ -24,6 +25,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 wayland-client = { workspace = true }
+lumen-input-wayland = { workspace = true }
+lumen-input-inject = { workspace = true }
+evdev = "0.13"
 
 [[bin]]
 name = "lumen-client"

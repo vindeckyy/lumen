@@ -46,7 +46,7 @@ PKGS=(
   build-essential pkg-config clang libclang-dev
   libva-dev libdrm-dev libgbm-dev libegl-dev libvulkan-dev
   libwayland-dev libxkbcommon-dev libxcb1-dev libxcb-util-dev
-  libpipewire-0.3-dev libopus-dev libei-dev libudev-dev libinput-dev libasound2-dev
+  libpipewire-0.3-dev libopus-dev libudev-dev libinput-dev libasound2-dev
   xvfb x11-xserver-utils xserver-xorg-video-dummy sway
   xdg-desktop-portal xdg-desktop-portal-wlr
   mesa-va-drivers vainfo vulkan-tools nvidia-vaapi-driver

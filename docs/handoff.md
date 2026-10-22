@@ -136,7 +136,7 @@ Stub crates (a 2-line `lib.rs` with `#![forbid(unsafe_code)]` and a doc comment,
 
 ### 4.3 `lumen-transport` (65 unit tests, 9 property tests)
 
-- `fec.rs` — GF(256). **Three parity slices per block recover three losses**, through a Vandermonde system solved by Gaussian elimination (D60). `ParityLevel::block_data_slices` gives eight for the light level and twelve for the heavy one, so the heavy level keeps the overhead at 25 %.
+- `fec.rs` — Reed-Solomon over GF(2^16) from `reed-solomon-simd` (D82). **Each block recovers as many losses as it has parity slices**; `parity_for_block` gives the parity count from the block size. `ParityLevel::block_data_slices` gives eight for the light level and twelve for the heavy one, so the heavy level keeps the overhead at 25 %.
 - `slice.rs` — the assembler. The parity arm creates the frame state (G2). At most 64 frames are held (G3). The block size comes from the header's `flags` word, and a missing entry is zero-filled so the rebuild is exact.
 - `media.rs` — `MediaSender` with a per-frame parity level (`set_parity`). **The access unit is sliced into one padded buffer, not a vector of slices** (section 11), and the data slices are sealed straight out of it.
 - `nack.rs` (**new**) — the NACK policy. The deadline is the capture timestamp plus 1.5 frame intervals, with a slack; a frame past it is dropped and a keyframe is asked for (D63).

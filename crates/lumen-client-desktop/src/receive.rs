@@ -199,7 +199,7 @@ impl ReceiveStage {
                             .frames_rebuilt
                             .store(receiver.stats().frames_rebuilt, Ordering::Relaxed);
                         last_frame = Some(au.frame_id);
-                        let is_keyframe = contains_idr(&au.data);
+                        let is_keyframe = is_recovery_point(&au.data);
                         let frame_id = au.frame_id;
                         let access_unit = AccessUnit {
                             frame_id,
@@ -214,14 +214,11 @@ impl ReceiveStage {
                         if self.access_units.try_send(access_unit).is_err() {
                             // The decode stage is busy. The plan wants the
                             // late frames dropped and not queued: a queue
-                            // that grows only adds latency. The decoder
-                            // needs a keyframe to recover, because the frame
-                            // that was dropped is a reference of the next
-                            // one.
+                            // that grows only adds latency. The next frame
+                            // predicts from the dropped one, so it fails to
+                            // decode, and the decode stage asks the host to
+                            // recover from the last frame it has.
                             self.counters.frames_dropped.fetch_add(1, Ordering::Relaxed);
-                            let _ = self
-                                .requests
-                                .try_send(ControlMessage::RequestIdr { frame_id });
                         }
                     }
                     // A late, stale or unauthenticated datagram is normal on a
@@ -258,12 +255,14 @@ fn parse_header(datagram: &[u8]) -> Option<MediaHeader> {
     MediaHeader::parse(&datagram[..HEADER_LEN]).ok()
 }
 
-/// Whether an Annex-B stream holds an IDR slice.
+/// Whether an Annex-B stream is a recovery point: it holds an IDR slice, or starts with a
+/// recovery point SEI, which the host puts before a picture that recovers from a loss by
+/// referencing a frame the client still has.
 ///
-/// The decoder does not need this, but the client needs to know when a frame
-/// can be presented without a reference picture.
+/// The decoder does not need this, but the client needs to know which frame may be decoded
+/// again after a loss.
 #[must_use]
-pub fn contains_idr(data: &[u8]) -> bool {
+pub fn is_recovery_point(data: &[u8]) -> bool {
     let mut i = 0usize;
     while i + 3 < data.len() {
         let is_start = data[i] == 0
@@ -271,7 +270,9 @@ pub fn contains_idr(data: &[u8]) -> bool {
             && (data[i + 2] == 1 || (data[i + 2] == 0 && data[i + 3] == 1));
         if is_start {
             let start = if data[i + 2] == 1 { i + 3 } else { i + 4 };
-            if start < data.len() && data[start] & 0x1f == 5 {
+            let nal_type = data.get(start).map(|b| b & 0x1f);
+            // An IDR slice, or an SEI whose first message is a recovery point (payload type 6).
+            if nal_type == Some(5) || (nal_type == Some(6) && data.get(start + 1) == Some(&6)) {
                 return true;
             }
             i = start;
@@ -284,29 +285,42 @@ pub fn contains_idr(data: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::contains_idr;
+    use super::is_recovery_point;
 
     #[test]
     fn finds_an_idr_nal() {
         let stream = [0u8, 0, 0, 1, 0x65, 0x88, 0x84, 0x00];
-        assert!(contains_idr(&stream));
+        assert!(is_recovery_point(&stream));
     }
 
     #[test]
     fn finds_an_idr_after_a_parameter_set() {
         let mut stream = vec![0u8, 0, 0, 1, 0x67, 0x42, 0x00, 0x1e];
         stream.extend_from_slice(&[0u8, 0, 0, 1, 0x65, 0x88]);
-        assert!(contains_idr(&stream));
+        assert!(is_recovery_point(&stream));
     }
 
     #[test]
     fn a_non_idr_stream_has_no_idr() {
         let stream = [0u8, 0, 0, 1, 0x41, 0x9a, 0x00, 0x00];
-        assert!(!contains_idr(&stream));
+        assert!(!is_recovery_point(&stream));
+    }
+
+    #[test]
+    fn a_recovery_point_sei_marks_a_p_picture() {
+        let stream = [
+            0u8, 0, 0, 1, 0x06, 0x06, 0x01, 0xC0, 0x80, 0, 0, 0, 1, 0x41, 0x9a,
+        ];
+        assert!(is_recovery_point(&stream));
+        // Another SEI message (user data, type 5) does not.
+        let other = [
+            0u8, 0, 0, 1, 0x06, 0x05, 0x01, 0xC0, 0x80, 0, 0, 0, 1, 0x41, 0x9a,
+        ];
+        assert!(!is_recovery_point(&other));
     }
 
     #[test]
     fn an_empty_stream_has_no_idr() {
-        assert!(!contains_idr(&[]));
+        assert!(!is_recovery_point(&[]));
     }
 }

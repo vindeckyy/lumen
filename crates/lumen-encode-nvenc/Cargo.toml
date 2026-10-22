@@ -12,6 +12,11 @@ description = "NVENC video encoder."
 [dependencies]
 lumen-protocol = { workspace = true }
 lumen-ffi-nvenc = { workspace = true }
+lumen-ffi-va = { workspace = true }
+lumen-encode-vaapi = { workspace = true }
+
+[dev-dependencies]
+lumen-decode-vaapi = { workspace = true }
 
 [lints]
 workspace = true

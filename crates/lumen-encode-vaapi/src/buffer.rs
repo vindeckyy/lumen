@@ -40,25 +40,36 @@ pub(crate) struct Picture {
     pub poc: u16,
     /// `idr_pic_id` for IDR pictures.
     pub idr_pic_id: u16,
+    /// `abs_diff_pic_num_minus1` of a list-0 modification, when the reference is not the
+    /// newest picture.
+    pub modification: Option<u32>,
 }
 
 impl Picture {
-    /// Plan the next picture. With no B-frames, POC follows decode order.
-    pub(crate) fn plan(last: Option<RefPicture>, force_idr: bool, idr_count: u16) -> Self {
+    /// Plan the next picture into reconstruction `slot`. `last` is the previous picture in
+    /// decode order. With no B-frames, POC follows decode order.
+    pub(crate) fn plan(
+        last: Option<RefPicture>,
+        slot: usize,
+        force_idr: bool,
+        idr_count: u16,
+    ) -> Self {
         match last {
             Some(prev) if !force_idr => Self {
                 idr: false,
-                slot: 1 - prev.slot,
+                slot,
                 frame_num: prev.frame_num.wrapping_add(1),
                 poc: prev.poc.wrapping_add(2),
                 idr_pic_id: idr_count,
+                modification: None,
             },
             _ => Self {
                 idr: true,
-                slot: 0,
+                slot,
                 frame_num: 0,
                 poc: 0,
                 idr_pic_id: idr_count,
+                modification: None,
             },
         }
     }
@@ -81,6 +92,17 @@ fn ref_entry(r: RefPicture) -> sys::VAPictureH264 {
         BottomFieldOrderCnt: i32::from(r.poc),
         ..Default::default()
     }
+}
+
+/// `max_num_ref_frames`: up to eight, bounded by the level's `MaxDpbMbs` (Table A-1) for the
+/// frame size. Eight frames give a loss several frame intervals to reach the host before the
+/// frame the client still has slides out of the window.
+#[must_use]
+pub(crate) fn ref_frames(cfg: &EncoderConfig) -> u32 {
+    /// `MaxDpbMbs` of level 5.2.
+    const MAX_DPB_MBS: u32 = 184_320;
+    let (mbs_w, mbs_h) = macroblocks(cfg);
+    (MAX_DPB_MBS / (mbs_w * mbs_h).max(1)).clamp(1, 8)
 }
 
 /// Initial QP written to the picture parameters.
@@ -106,8 +128,8 @@ pub(crate) const fn crop(cfg: &EncoderConfig) -> (u32, u32) {
     ((mbs_w * 16 - cfg.width) / 2, (mbs_h * 16 - cfg.height) / 2)
 }
 
-/// `VAEncSequenceParameterBufferH264`: no B-frames (`ip_period = 1`), one
-/// reference frame, infinite GOP, POC type 0, cropping to the exact frame size.
+/// `VAEncSequenceParameterBufferH264`: no B-frames (`ip_period = 1`), [`ref_frames`]
+/// references, infinite GOP, POC type 2, cropping to the exact frame size.
 #[must_use]
 pub(crate) fn h264_sequence(cfg: &EncoderConfig) -> sys::VAEncSequenceParameterBufferH264 {
     let (mbs_w, mbs_h) = macroblocks(cfg);
@@ -136,7 +158,7 @@ pub(crate) fn h264_sequence(cfg: &EncoderConfig) -> sys::VAEncSequenceParameterB
             RateControl::Cbr { bits_per_second } => bits_per_second,
             RateControl::Cqp { .. } => 0,
         },
-        max_num_ref_frames: 1,
+        max_num_ref_frames: ref_frames(cfg),
         picture_width_in_mbs: mbs_w as u16,
         picture_height_in_mbs: mbs_h as u16,
         seq_fields: sys::_VAEncSequenceParameterBufferH264__bindgen_ty_1 { bits },
@@ -167,19 +189,19 @@ pub(crate) fn pic_bits(
 }
 
 /// `VAEncPictureParameterBufferH264` for one picture. `coded_buf` receives the
-/// bitstream, `curr` is the reconstruction surface, `reference` the one P reference.
+/// bitstream, `curr` is the reconstruction surface, `references` every picture in the DPB.
 #[must_use]
 pub(crate) fn h264_picture(
     profile: H264Profile,
     rc: RateControl,
     pic: &Picture,
     curr: u32,
-    reference: Option<RefPicture>,
+    references: &[RefPicture],
     coded_buf: u32,
 ) -> sys::VAEncPictureParameterBufferH264 {
     let mut refs = [invalid_pic(); 16];
-    if let Some(r) = reference {
-        refs[0] = ref_entry(r);
+    for (slot, r) in refs.iter_mut().zip(references) {
+        *slot = ref_entry(*r);
     }
     sys::VAEncPictureParameterBufferH264 {
         CurrPic: sys::VAPictureH264 {
@@ -354,8 +376,8 @@ mod tests {
     }
 
     #[test]
-    fn first_picture_is_idr_then_alternates_slots() {
-        let p0 = Picture::plan(None, false, 0);
+    fn first_picture_is_idr_then_frame_num_and_poc_advance() {
+        let p0 = Picture::plan(None, 0, false, 0);
         assert!(p0.idr && p0.frame_num == 0 && p0.slot == 0);
         let last = RefPicture {
             slot: p0.slot,
@@ -363,7 +385,7 @@ mod tests {
             frame_num: p0.frame_num,
             poc: p0.poc,
         };
-        let p1 = Picture::plan(Some(last), false, 1);
+        let p1 = Picture::plan(Some(last), 1, false, 1);
         assert!(!p1.idr && p1.frame_num == 1 && p1.slot == 1 && p1.poc == 2);
         let last = RefPicture {
             slot: p1.slot,
@@ -371,7 +393,7 @@ mod tests {
             frame_num: p1.frame_num,
             poc: p1.poc,
         };
-        let p2 = Picture::plan(Some(last), false, 1);
+        let p2 = Picture::plan(Some(last), 0, false, 1);
         assert_eq!((p2.slot, p2.frame_num, p2.poc), (0, 2, 4));
     }
 
@@ -383,7 +405,7 @@ mod tests {
             frame_num: 77,
             poc: 154,
         };
-        let p = Picture::plan(Some(last), true, 5);
+        let p = Picture::plan(Some(last), 0, true, 5);
         assert!(p.idr && p.frame_num == 0 && p.poc == 0 && p.idr_pic_id == 5);
     }
 
@@ -395,9 +417,16 @@ mod tests {
         assert_eq!(s.frame_crop_bottom_offset, 4);
         assert_eq!(s.frame_crop_right_offset, 0);
         assert_eq!(s.ip_period, 1);
-        assert_eq!(s.max_num_ref_frames, 1);
+        assert_eq!(s.max_num_ref_frames, 8);
         assert_eq!(s.intra_idr_period, NO_PERIODIC_IDR);
         assert_eq!(s.bits_per_second, 0);
+    }
+
+    #[test]
+    fn the_reference_count_follows_the_level_limit() {
+        assert_eq!(ref_frames(&cfg(1920, 1080)), 8);
+        // 3840x2160 is 32400 macroblocks: 184320 / 32400 = 5.
+        assert_eq!(ref_frames(&cfg(3840, 2160)), 5);
     }
 
     #[test]
@@ -410,8 +439,8 @@ mod tests {
 
     #[test]
     fn idr_picture_sets_idr_flag_and_invalid_refs() {
-        let p = Picture::plan(None, false, 0);
-        let pic = h264_picture(H264Profile::High, RateControl::default(), &p, 10, None, 20);
+        let p = Picture::plan(None, 0, false, 0);
+        let pic = h264_picture(H264Profile::High, RateControl::default(), &p, 10, &[], 20);
         let bits = pic_bits(H264Profile::High, true);
         assert_eq!(bits.idr_pic_flag(), 1);
         assert_eq!(bits.entropy_coding_mode_flag(), 1);
@@ -441,13 +470,13 @@ mod tests {
             frame_num: 0,
             poc: 0,
         };
-        let p = Picture::plan(Some(last), false, 0);
+        let p = Picture::plan(Some(last), 1, false, 0);
         let pic = h264_picture(
             H264Profile::Main,
             RateControl::default(),
             &p,
             11,
-            Some(last),
+            &[last],
             20,
         );
         assert_eq!(pic.ReferenceFrames[0].picture_id, 10);

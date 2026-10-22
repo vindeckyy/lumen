@@ -11,6 +11,7 @@ description = "FFI bindings for NVENC (libnvidia-encode.so.1)."
 
 [dependencies]
 libloading = { workspace = true }
+thiserror = { workspace = true }
 
 [lints]
 workspace = true

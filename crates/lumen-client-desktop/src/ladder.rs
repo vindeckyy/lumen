@@ -42,11 +42,16 @@ const CLEAN_FOR: Duration = Duration::from_secs(10);
 /// picture.
 const DROP_LIMIT: f64 = 0.02;
 
-/// How long a picture the client failed at stays blocked.
+/// How long a picture the client failed at stays blocked the first time.
 ///
 /// A machine that was busy for a moment should not lower the quality for
 /// good, so the client tries the bigger picture again after a while.
 const BLOCK_FOR: Duration = Duration::from_secs(60);
+
+/// The longest block. Each repeated failure at the same picture doubles the
+/// block up to this, so a machine that cannot hold a picture stops paying
+/// for a failed climb every minute. The idea is punktfunk's learned ceiling.
+const BLOCK_MAX: Duration = Duration::from_mins(16);
 
 /// How long a request for a size waits to be applied before a later picture of any size is taken.
 ///
@@ -70,13 +75,14 @@ pub struct Ladder {
     /// the host would scale up to reach it, and a picture bigger than the
     /// capture is a picture the host has to invent.
     ceiling: usize,
-    /// The width of the biggest picture the client failed at, and when it
-    /// failed.
+    /// The width of the biggest picture the client failed at, when it
+    /// failed, and how long the block lasts.
     ///
     /// Without it the client climbs back to a picture it has already shown
     /// it cannot reach, and the quality never settles. The block expires,
-    /// so a picture that failed once is tried again later.
-    blocked: Option<(u32, Instant)>,
+    /// so a picture that failed once is tried again later; a picture that
+    /// fails again is blocked twice as long.
+    blocked: Option<Block>,
     /// The frames dropped since the last look.
     dropped: u64,
     /// The frames shown since the last look.
@@ -186,12 +192,18 @@ impl Ladder {
             // The picture the client is on is too big for it, so it is
             // remembered as one it must not ask for again.
             let (width, _) = LADDER[self.index];
-            self.blocked = Some(match self.blocked {
-                Some((blocked, _)) => (blocked.min(width), Instant::now()),
-                None => (width, Instant::now()),
-            });
+            self.blocked = Some(Block::after_failure(self.blocked, width, now));
             self.index += 1;
             return Some(self.request());
+        }
+        if drop_rate == 0.0
+            && now.duration_since(self.last_drop) >= CLEAN_FOR
+            && self
+                .blocked
+                .is_some_and(|b| LADDER[self.index].0 >= b.width)
+        {
+            // The client holds the picture it once failed at: forgive it.
+            self.blocked = None;
         }
         // The client goes back up only when the ceiling allows it, which
         // means the host has sent a bigger picture at some point.
@@ -203,10 +215,7 @@ impl Ladder {
             let (width, _) = LADDER[self.index - 1];
             // The client does not ask for a picture it has already failed
             // at, unless the block has gone stale.
-            let allowed = match self.blocked {
-                Some((blocked, when)) => width < blocked || now.duration_since(when) >= BLOCK_FOR,
-                None => true,
-            };
+            let allowed = self.blocked.is_none_or(|b| b.allows(width, now));
             if allowed {
                 self.index -= 1;
                 return Some(self.request());
@@ -219,6 +228,46 @@ impl Ladder {
     fn request(&mut self) -> (u32, u32) {
         self.pending = Some((self.index, Instant::now()));
         LADDER[self.index]
+    }
+}
+
+/// A picture the client failed at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Block {
+    /// The width of the smallest picture that failed.
+    width: u32,
+    /// When it last failed.
+    since: Instant,
+    /// How long the block lasts.
+    length: Duration,
+}
+
+impl Block {
+    /// The block after a failure at `width`. A failure at or above a picture
+    /// already blocked is a repeated failure, so the block doubles.
+    fn after_failure(previous: Option<Self>, width: u32, now: Instant) -> Self {
+        match previous {
+            Some(b) if width >= b.width => Self {
+                width: b.width,
+                since: now,
+                length: (b.length * 2).min(BLOCK_MAX),
+            },
+            Some(b) => Self {
+                width,
+                since: now,
+                length: b.length,
+            },
+            None => Self {
+                width,
+                since: now,
+                length: BLOCK_FOR,
+            },
+        }
+    }
+
+    /// Whether the client may ask for a picture `width` wide at `now`.
+    fn allows(self, width: u32, now: Instant) -> bool {
+        width < self.width || now.duration_since(self.since) >= self.length
     }
 }
 
@@ -306,12 +355,41 @@ mod tests {
         let stale = Instant::now()
             .checked_sub(BLOCK_FOR + Duration::from_secs(1))
             .unwrap_or_else(Instant::now);
-        ladder.blocked = Some((1280, stale));
+        ladder.blocked = Some(Block {
+            width: 1280,
+            since: stale,
+            length: BLOCK_FOR,
+        });
         for _ in 0..100 {
             ladder.record_shown();
         }
         std::thread::sleep(CLEAN_FOR + WINDOW + Duration::from_millis(50));
         assert_eq!(ladder.step(), Some((1280, 720)));
+    }
+
+    #[test]
+    fn a_repeated_failure_doubles_the_block_up_to_the_cap() {
+        let t0 = Instant::now();
+        let first = Block::after_failure(None, 1280, t0);
+        assert_eq!(first.length, BLOCK_FOR);
+        assert!(!first.allows(1280, t0 + BLOCK_FOR / 2));
+        assert!(first.allows(1280, t0 + BLOCK_FOR));
+        // A smaller picture is never blocked by a bigger one.
+        assert!(first.allows(1024, t0));
+        // The client climbed back, failed again: twice as long, from the new failure.
+        let t1 = t0 + BLOCK_FOR;
+        let second = Block::after_failure(Some(first), 1280, t1);
+        assert_eq!(second.length, BLOCK_FOR * 2);
+        assert!(!second.allows(1280, t1 + BLOCK_FOR));
+        // A failure one rung lower moves the block down without growing it.
+        let lower = Block::after_failure(Some(second), 1024, t1);
+        assert_eq!((lower.width, lower.length), (1024, BLOCK_FOR * 2));
+        // The doubling stops at the cap.
+        let mut block = first;
+        for _ in 0..10 {
+            block = Block::after_failure(Some(block), 1280, t0);
+        }
+        assert_eq!(block.length, BLOCK_MAX);
     }
 
     #[test]

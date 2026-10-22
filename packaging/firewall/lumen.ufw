@@ -1,0 +1,17 @@
+# Lumen's firewall rules for ufw.
+#
+# The host serves three ports: the control plane (TCP 24800), the media the
+# client receives (UDP 24801) and the input the client sends (UDP 24820). The
+# web console is not in this list: it listens on the loopback by default.
+#
+# Install:
+#   sudo ufw allow 24800/tcp comment 'Lumen control'
+#   sudo ufw allow 24801/udp comment 'Lumen media'
+#   sudo ufw allow 24820/udp comment 'Lumen input'
+#
+# The rules follow punktfunk's packaging/linux/punktfunk.ufw (MIT OR
+# Apache-2.0, Copyright (c) 2026 unom - Enrico Bühler).
+
+24800/tcp
+24801/udp
+24820/udp

@@ -3,10 +3,10 @@
 //! reference store.
 
 use lumen_ffi_va::{OwnedVaBuffer, OwnedVaSurface, VaContext, VaDisplay, sys};
-use lumen_protocol::media::{FrameBuffer, PixelFormat};
+use lumen_protocol::media::{FrameBuffer, KeepAlive, PixelFormat};
 
 use crate::bitstream::{H264Profile, Picture, Pps, PredWeightTable, SliceHeader, SliceKind, Sps};
-use crate::dpb::{PicturePlan, RefPic, RefStore};
+use crate::dpb::{NON_EXISTING, PicturePlan, RefPic, RefStore};
 use crate::output::{self, Crop, Nv12Layout};
 
 /// Minimum decode surfaces per session. The pool grows to one more than the reference count,
@@ -37,7 +37,14 @@ fn va_profile(profile: H264Profile) -> sys::VAProfile {
 /// `CurrPic.flags`: a reference picture is marked short-term once it is decoded (8.2.5.1), so
 /// its entry carries the same marking the reference lists use. Non-reference pictures carry none.
 fn curr_pic_flags(header: &SliceHeader) -> u32 {
-    if header.reference {
+    let long_term = header.long_term_reference
+        || header.mmco.as_ref().is_some_and(|ops| {
+            ops.iter()
+                .any(|op| matches!(op, crate::bitstream::Mmco::CurrentToLongTerm { .. }))
+        });
+    if long_term {
+        sys::VA_PICTURE_H264_LONG_TERM_REFERENCE
+    } else if header.reference {
         sys::VA_PICTURE_H264_SHORT_TERM_REFERENCE
     } else {
         0
@@ -49,6 +56,8 @@ fn curr_pic_flags(header: &SliceHeader) -> u32 {
 pub struct Session {
     context: VaContext,
     surfaces: Vec<OwnedVaSurface>,
+    /// One lease per pool slot: the session holds one, every exported picture holds another.
+    leases: Vec<KeepAlive>,
     refs: RefStore,
     sps: Sps,
 }
@@ -89,9 +98,20 @@ impl Session {
                 .map_err(va_err)?;
         Ok(Self {
             context,
+            leases: (0..pool).map(|_| KeepAlive::new()).collect(),
             surfaces,
             refs,
             sps: sps.clone(),
+        })
+    }
+
+    /// A pool slot that no reference holds and that no exported picture still uses.
+    ///
+    /// A picture the compositor still reads aliases its slot, so the decoder must not write
+    /// over it: the lease of the slot is held by that picture until the consumer drops it.
+    fn free_slot(&self, pool: usize) -> Option<usize> {
+        (0..pool).find(|slot| {
+            !self.refs.refs().iter().any(|r| r.slot == *slot) && !self.leases[*slot].is_held()
         })
     }
 
@@ -115,11 +135,13 @@ impl Session {
         prefer_dmabuf: bool,
     ) -> Result<FrameBuffer, String> {
         let first = &picture.slices[0].1;
+        // Frames a frame_num gap skipped are inferred before this picture's lists are built.
+        // They are implied by the header, so they stay even if this picture fails.
+        self.refs.fill_gap(first);
         let plan = self.refs.plan(first).map_err(str::to_owned)?;
         let slot = self
-            .refs
             .free_slot(self.surfaces.len())
-            .ok_or("no free decode surface: every pool slot is a reference")?;
+            .ok_or("no free decode surface: every pool slot is a reference or still in use")?;
         let slice_refs = self.list0_per_slice(picture)?;
 
         let target = &self.surfaces[slot];
@@ -153,7 +175,13 @@ impl Session {
                 .ok()
                 .and_then(|export| output::dmabuf_buffer(export, crop))
         {
-            return Ok(buffer);
+            // The exported buffer aliases this pool slot, so it holds the slot's lease until the
+            // consumer drops it.
+            let lease = self.leases[slot].clone();
+            return Ok(match buffer {
+                FrameBuffer::Dmabuf(image) => FrameBuffer::Dmabuf(image.with_keepalive(lease)),
+                cpu @ FrameBuffer::Cpu { .. } => cpu,
+            });
         }
         cpu_nv12(target, crop).map(|data| FrameBuffer::Cpu { data })
     }
@@ -167,12 +195,17 @@ impl Session {
             .map(|(_, header)| match header.kind {
                 SliceKind::I => Ok(Vec::new()),
                 SliceKind::P => {
-                    let active = header.num_ref_idx_l0_active_minus1 as usize + 1;
-                    let list = self.refs.p_list(header.frame_num, active);
-                    if list.is_empty() {
+                    let list = self.refs.p_list(header).map_err(str::to_owned)?;
+                    if list.first().is_some_and(|r| r.slot == NON_EXISTING) {
+                        // The first reference is a frame inferred for a gap: the picture
+                        // predicts from a frame that was lost, and decoding it would conceal.
+                        Err("frame_num gap: the reference picture was lost".to_owned())
+                    } else if list.is_empty() {
                         Err("P slice without a reference picture: the stream must start with an IDR"
                             .to_owned())
                     } else {
+                        // An inferred frame further down the list still counts for the indices
+                        // (8.2.5.2); VA gets an invalid entry there.
                         Ok(list)
                     }
                 }
@@ -261,13 +294,20 @@ fn invalid_picture() -> sys::VAPictureH264 {
     }
 }
 
-/// A reference picture as a VA-API entry: its surface, frame_num, order counts, and the
-/// short-term marking the reference store gave it.
+/// A reference picture as a VA-API entry: its surface, its frame_num (or `LongTermFrameIdx`),
+/// order counts, and the marking the reference store gave it.
 fn va_ref(surfaces: &[OwnedVaSurface], r: RefPic) -> sys::VAPictureH264 {
+    if r.slot == NON_EXISTING {
+        return invalid_picture();
+    }
+    let (frame_idx, flags) = match r.long_term {
+        Some(idx) => (idx, sys::VA_PICTURE_H264_LONG_TERM_REFERENCE),
+        None => (r.frame_num, sys::VA_PICTURE_H264_SHORT_TERM_REFERENCE),
+    };
     sys::VAPictureH264 {
         picture_id: surfaces[r.slot].id(),
-        frame_idx: r.frame_num,
-        flags: sys::VA_PICTURE_H264_SHORT_TERM_REFERENCE,
+        frame_idx,
+        flags,
         TopFieldOrderCnt: r.top_poc,
         BottomFieldOrderCnt: r.bottom_poc,
         ..Default::default()
@@ -296,7 +336,8 @@ fn picture_parameter(
     };
     // Every entry starts invalid; the live references fill the front, in store order.
     p.ReferenceFrames = [invalid_picture(); 16];
-    for (entry, r) in p.ReferenceFrames.iter_mut().zip(refs.refs()) {
+    let real = refs.refs().iter().filter(|r| r.slot != NON_EXISTING);
+    for (entry, r) in p.ReferenceFrames.iter_mut().zip(real) {
         *entry = va_ref(surfaces, *r);
     }
     p.picture_width_in_mbs_minus1 =

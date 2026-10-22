@@ -1,0 +1,16 @@
+[package]
+publish = false
+name = "lumen-drm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "DRM helpers the decoder needs: the i915 media-engine clock boost."
+
+[dependencies]
+libc = "0.2"
+
+[lints]
+workspace = true

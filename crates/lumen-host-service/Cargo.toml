@@ -18,6 +18,8 @@ lumen-audio = { workspace = true }
 lumen-capture-wlr = { workspace = true }
 lumen-capture-x11 = { workspace = true }
 lumen-encode-vaapi = { workspace = true }
+lumen-encode-nvenc = { workspace = true }
+lumen-capture-pipewire = { workspace = true }
 lumen-ffi-va = { workspace = true }
 lumen-input-inject = { workspace = true }
 lumen-input-wayland = { workspace = true }

@@ -29,6 +29,79 @@ const KIND_MOTION_RELATIVE: u8 = 2;
 const KIND_MOTION_ABSOLUTE: u8 = 3;
 const KIND_BUTTON: u8 = 4;
 const KIND_SCROLL: u8 = 5;
+const KIND_GAMEPAD: u8 = 6;
+const KIND_GAMEPAD_REMOVED: u8 = 7;
+const KIND_TOUCH: u8 = 8;
+const KIND_PEN: u8 = 9;
+
+/// How many gamepads one client may drive at once.
+pub const MAX_PADS: u8 = 4;
+/// How many touch contacts one client may have down at once.
+pub const MAX_TOUCH_SLOTS: u8 = 10;
+
+/// Phase of one touch contact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TouchPhase {
+    /// The contact just touched the surface.
+    Down,
+    /// The contact moved.
+    Motion,
+    /// The contact left the surface.
+    Up,
+}
+
+impl TouchPhase {
+    const fn byte(self) -> u8 {
+        match self {
+            Self::Down => 0,
+            Self::Motion => 1,
+            Self::Up => 2,
+        }
+    }
+
+    const fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(Self::Down),
+            1 => Some(Self::Motion),
+            2 => Some(Self::Up),
+            _ => None,
+        }
+    }
+}
+
+/// Gamepad button bits, the XInput layout: `A` is the bottom face button, `Y` the top one.
+pub mod pad {
+    /// D-pad up.
+    pub const DPAD_UP: u16 = 0x0001;
+    /// D-pad down.
+    pub const DPAD_DOWN: u16 = 0x0002;
+    /// D-pad left.
+    pub const DPAD_LEFT: u16 = 0x0004;
+    /// D-pad right.
+    pub const DPAD_RIGHT: u16 = 0x0008;
+    /// Start (Options).
+    pub const START: u16 = 0x0010;
+    /// Back (Create, Share, Select).
+    pub const BACK: u16 = 0x0020;
+    /// Left stick click.
+    pub const LEFT_STICK: u16 = 0x0040;
+    /// Right stick click.
+    pub const RIGHT_STICK: u16 = 0x0080;
+    /// Left shoulder.
+    pub const LEFT_SHOULDER: u16 = 0x0100;
+    /// Right shoulder.
+    pub const RIGHT_SHOULDER: u16 = 0x0200;
+    /// Guide (Xbox, PS).
+    pub const GUIDE: u16 = 0x0400;
+    /// Bottom face button (Cross).
+    pub const A: u16 = 0x1000;
+    /// Right face button (Circle).
+    pub const B: u16 = 0x2000;
+    /// Left face button (Square).
+    pub const X: u16 = 0x4000;
+    /// Top face button (Triangle).
+    pub const Y: u16 = 0x8000;
+}
 
 /// One input action. Coordinates are client-surface pixels; every float must be finite.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -43,6 +116,38 @@ pub enum InputAction {
     Button { button: u32, pressed: bool },
     /// Scroll in logical pixels.
     Scroll { dx: f64, dy: f64 },
+    /// The whole state of gamepad `pad` (below [`MAX_PADS`]). It is sent on every change and
+    /// repeated while the pad is there, so a lost datagram costs one repeat at most.
+    /// `buttons` holds [`pad`] bits; sticks run from -32768 to 32767 with up and right
+    /// positive; triggers run from 0 to 255.
+    Gamepad {
+        pad: u8,
+        buttons: u16,
+        lx: i16,
+        ly: i16,
+        rx: i16,
+        ry: i16,
+        lt: u8,
+        rt: u8,
+    },
+    /// The client no longer has gamepad `pad`.
+    GamepadRemoved { pad: u8 },
+    /// One touch contact. `slot` tells the contacts apart (0 to [`MAX_TOUCH_SLOTS`]). The
+    /// coordinates are a fraction of the client's screen: 0 is its left edge and 1 its right.
+    Touch {
+        slot: u8,
+        phase: TouchPhase,
+        x: f64,
+        y: f64,
+    },
+    /// A pen sample, in the same fractions. `pressure` is 0 to 4095, and `in_range` says the
+    /// pen is near the surface.
+    Pen {
+        x: f64,
+        y: f64,
+        pressure: u16,
+        in_range: bool,
+    },
 }
 
 /// A decoded input event together with its stamp.
@@ -87,24 +192,55 @@ impl InputAction {
             Self::MotionAbsolute { .. } => KIND_MOTION_ABSOLUTE,
             Self::Button { .. } => KIND_BUTTON,
             Self::Scroll { .. } => KIND_SCROLL,
+            Self::Gamepad { .. } => KIND_GAMEPAD,
+            Self::GamepadRemoved { .. } => KIND_GAMEPAD_REMOVED,
+            Self::Touch { .. } => KIND_TOUCH,
+            Self::Pen { .. } => KIND_PEN,
         }
     }
 
-    /// Rejects non-finite coordinates, so a NaN never reaches an injector.
+    /// Rejects non-finite coordinates, so a NaN never reaches an injector, and a gamepad index
+    /// at or above [`MAX_PADS`].
     ///
     /// # Errors
-    /// Returns [`InputCodecError::Malformed`] when a coordinate or delta is NaN or infinite.
+    /// Returns [`InputCodecError::Malformed`] when a coordinate or delta is NaN or infinite, or
+    /// a gamepad index is out of range.
     pub fn validate(self) -> Result<(), InputCodecError> {
-        let finite = match self {
-            Self::Key { .. } | Self::Button { .. } => true,
+        match self {
+            Self::Key { .. } | Self::Button { .. } => Ok(()),
             Self::MotionRelative { dx: a, dy: b }
             | Self::MotionAbsolute { x: a, y: b }
-            | Self::Scroll { dx: a, dy: b } => a.is_finite() && b.is_finite(),
-        };
-        if finite {
-            Ok(())
-        } else {
-            Err(InputCodecError::Malformed("non-finite coordinate"))
+            | Self::Scroll { dx: a, dy: b } => {
+                if a.is_finite() && b.is_finite() {
+                    Ok(())
+                } else {
+                    Err(InputCodecError::Malformed("non-finite coordinate"))
+                }
+            }
+            Self::Gamepad { pad, .. } | Self::GamepadRemoved { pad } => {
+                if pad < MAX_PADS {
+                    Ok(())
+                } else {
+                    Err(InputCodecError::Malformed("gamepad index out of range"))
+                }
+            }
+            Self::Touch { slot, x, y, .. } => {
+                if slot >= MAX_TOUCH_SLOTS {
+                    return Err(InputCodecError::Malformed("touch slot out of range"));
+                }
+                if x.is_finite() && y.is_finite() {
+                    Ok(())
+                } else {
+                    Err(InputCodecError::Malformed("non-finite coordinate"))
+                }
+            }
+            Self::Pen { x, y, .. } => {
+                if x.is_finite() && y.is_finite() {
+                    Ok(())
+                } else {
+                    Err(InputCodecError::Malformed("non-finite coordinate"))
+                }
+            }
         }
     }
 }
@@ -131,6 +267,42 @@ pub fn encode_plaintext(sequence: u64, client_ts_us: u64, action: InputAction) -
             out.extend_from_slice(&a.to_le_bytes());
             out.extend_from_slice(&b.to_le_bytes());
         }
+        InputAction::Gamepad {
+            pad,
+            buttons,
+            lx,
+            ly,
+            rx,
+            ry,
+            lt,
+            rt,
+        } => {
+            out.push(pad);
+            out.extend_from_slice(&buttons.to_le_bytes());
+            for axis in [lx, ly, rx, ry] {
+                out.extend_from_slice(&axis.to_le_bytes());
+            }
+            out.push(lt);
+            out.push(rt);
+        }
+        InputAction::GamepadRemoved { pad } => out.push(pad),
+        InputAction::Touch { slot, phase, x, y } => {
+            out.push(slot);
+            out.push(phase.byte());
+            out.extend_from_slice(&x.to_le_bytes());
+            out.extend_from_slice(&y.to_le_bytes());
+        }
+        InputAction::Pen {
+            x,
+            y,
+            pressure,
+            in_range,
+        } => {
+            out.extend_from_slice(&x.to_le_bytes());
+            out.extend_from_slice(&y.to_le_bytes());
+            out.extend_from_slice(&pressure.to_le_bytes());
+            out.push(u8::from(in_range));
+        }
     }
     out
 }
@@ -144,7 +316,7 @@ pub fn encode_plaintext(sequence: u64, client_ts_us: u64, action: InputAction) -
 pub fn decode_plaintext(bytes: &[u8]) -> Result<InputEnvelope, InputCodecError> {
     let mut r = Reader { buf: bytes, pos: 0 };
     let kind = r.u8()?;
-    if !matches!(kind, KIND_KEY..=KIND_SCROLL) {
+    if !matches!(kind, KIND_KEY..=KIND_PEN) {
         return Err(InputCodecError::UnknownKind(kind));
     }
     let client_ts_us = r.u64()?;
@@ -173,8 +345,37 @@ pub fn decode_plaintext(bytes: &[u8]) -> Result<InputEnvelope, InputCodecError> 
             let dy = r.finite()?;
             InputAction::Scroll { dx, dy }
         }
+        KIND_GAMEPAD => InputAction::Gamepad {
+            pad: r.u8()?,
+            buttons: u16::from_le_bytes(r.take()?),
+            lx: i16::from_le_bytes(r.take()?),
+            ly: i16::from_le_bytes(r.take()?),
+            rx: i16::from_le_bytes(r.take()?),
+            ry: i16::from_le_bytes(r.take()?),
+            lt: r.u8()?,
+            rt: r.u8()?,
+        },
+        KIND_GAMEPAD_REMOVED => InputAction::GamepadRemoved { pad: r.u8()? },
+        KIND_TOUCH => {
+            let slot = r.u8()?;
+            let phase = TouchPhase::from_byte(r.u8()?)
+                .ok_or(InputCodecError::Malformed("unknown touch phase"))?;
+            InputAction::Touch {
+                slot,
+                phase,
+                x: r.finite()?,
+                y: r.finite()?,
+            }
+        }
+        KIND_PEN => InputAction::Pen {
+            x: r.finite()?,
+            y: r.finite()?,
+            pressure: u16::from_le_bytes(r.take()?),
+            in_range: r.flag()?,
+        },
         other => return Err(InputCodecError::UnknownKind(other)),
     };
+    action.validate()?;
     if r.remaining() != 0 {
         return Err(InputCodecError::Malformed("trailing bytes after event"));
     }
@@ -372,6 +573,29 @@ mod tests {
                 dx: 0.0,
                 dy: -120.0,
             },
+            InputAction::Gamepad {
+                pad: MAX_PADS - 1,
+                buttons: pad::A | pad::DPAD_LEFT | pad::GUIDE,
+                lx: i16::MIN,
+                ly: i16::MAX,
+                rx: -1,
+                ry: 1,
+                lt: 0,
+                rt: 255,
+            },
+            InputAction::GamepadRemoved { pad: 0 },
+            InputAction::Touch {
+                slot: 3,
+                phase: TouchPhase::Motion,
+                x: 12.5,
+                y: 900.0,
+            },
+            InputAction::Pen {
+                x: 0.0,
+                y: 0.0,
+                pressure: 4095,
+                in_range: true,
+            },
         ]
     }
 
@@ -425,7 +649,7 @@ mod tests {
 
     #[test]
     fn unknown_kind_is_rejected() {
-        for kind in [0u8, KIND_SCROLL + 1, 0x7f, 0xff] {
+        for kind in [0u8, KIND_PEN + 1, 0x7f, 0xff] {
             let mut bytes = encode_plaintext(
                 1,
                 2,
@@ -501,6 +725,52 @@ mod tests {
             Err(InputCodecError::Malformed("non-finite coordinate"))
         );
         assert_eq!(tx.counter(), 0, "a rejected event must not use a sequence");
+    }
+
+    #[test]
+    fn a_gamepad_index_out_of_range_is_rejected_on_decode_and_seal() {
+        let action = InputAction::GamepadRemoved { pad: MAX_PADS };
+        assert_eq!(
+            decode_plaintext(&encode_plaintext(1, 2, action)),
+            Err(InputCodecError::Malformed("gamepad index out of range"))
+        );
+        let mut tx = cipher();
+        assert!(seal_packet(&mut tx, 0, action).is_err());
+        assert_eq!(tx.counter(), 0, "a rejected event must not use a sequence");
+    }
+
+    #[test]
+    fn a_touch_slot_out_of_range_and_an_unknown_phase_are_rejected() {
+        let action = InputAction::Touch {
+            slot: MAX_TOUCH_SLOTS,
+            phase: TouchPhase::Down,
+            x: 0.0,
+            y: 0.0,
+        };
+        assert_eq!(
+            decode_plaintext(&encode_plaintext(1, 2, action)),
+            Err(InputCodecError::Malformed("touch slot out of range"))
+        );
+        let mut tx = cipher();
+        assert!(seal_packet(&mut tx, 0, action).is_err());
+        assert_eq!(tx.counter(), 0, "a rejected event must not use a sequence");
+
+        let mut bytes = encode_plaintext(
+            1,
+            2,
+            InputAction::Touch {
+                slot: 0,
+                phase: TouchPhase::Down,
+                x: 0.0,
+                y: 0.0,
+            },
+        );
+        // The phase follows the slot.
+        bytes[18] = 7;
+        assert_eq!(
+            decode_plaintext(&bytes),
+            Err(InputCodecError::Malformed("unknown touch phase"))
+        );
     }
 
     #[test]

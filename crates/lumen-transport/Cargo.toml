@@ -10,6 +10,8 @@ authors.workspace = true
 description = "Lumen transport: UDP datagrams, FEC, pacing, estimation."
 
 [dependencies]
+reed-solomon-simd = { workspace = true }
+mdns-sd = { workspace = true }
 lumen-protocol = { workspace = true }
 lumen-crypto = { workspace = true }
 socket2 = { workspace = true }

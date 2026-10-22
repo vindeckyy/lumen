@@ -3,6 +3,10 @@
 //! One `xdg_toplevel` sized to the frame. CPU frames are copied into `wl_shm` buffers and
 //! dmabuf frames become `zwp_linux_dmabuf_v1` buffers. Every frame is committed as soon as its
 //! buffer is attached, without waiting for a frame callback.
+//!
+//! The window asks for server-side decorations when the compositor offers
+//! `zxdg_decoration_manager_v1`, carries the [`crate::APP_ID`] so the desktop shows the Lumen
+//! icon, records the user's close request and can be made fullscreen.
 
 use std::collections::HashSet;
 use std::fs::File;
@@ -11,7 +15,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use lumen_protocol::media::{DmabufImage, FrameBuffer, FrameSink, PixelFormat, VideoFrame};
+use lumen_protocol::media::{
+    DmabufImage, FrameBuffer, FrameSink, KeepAlive, PixelFormat, VideoFrame,
+};
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use wayland_client::backend::WaylandError;
 use wayland_client::globals::{GlobalList, GlobalListContents, registry_queue_init};
@@ -36,8 +42,12 @@ use wayland_protocols::wp::tearing_control::v1::client::wp_tearing_control_manag
 use wayland_protocols::wp::tearing_control::v1::client::wp_tearing_control_v1::{
     PresentationHint, WpTearingControlV1,
 };
+use wayland_protocols::xdg::decoration::zv1::client::zxdg_decoration_manager_v1::ZxdgDecorationManagerV1;
+use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1::{
+    Mode as DecorationMode, ZxdgToplevelDecorationV1,
+};
 use wayland_protocols::xdg::shell::client::xdg_surface::{self, XdgSurface};
-use wayland_protocols::xdg::shell::client::xdg_toplevel::XdgToplevel;
+use wayland_protocols::xdg::shell::client::xdg_toplevel::{self, XdgToplevel};
 use wayland_protocols::xdg::shell::client::xdg_wm_base::{self, XdgWmBase};
 
 use crate::format;
@@ -59,6 +69,8 @@ struct State {
     /// `(drm fourcc, modifier)` pairs the compositor accepts for dmabuf import.
     dmabuf_formats: HashSet<(u32, u64)>,
     last_present_ts_us: Option<u64>,
+    /// The user asked to close the window.
+    close_requested: bool,
 }
 
 impl Dispatch<WlRegistry, GlobalListContents> for State {
@@ -120,6 +132,21 @@ impl Dispatch<XdgSurface, ()> for State {
     }
 }
 
+impl Dispatch<XdgToplevel, ()> for State {
+    fn event(
+        state: &mut Self,
+        _: &XdgToplevel,
+        event: xdg_toplevel::Event,
+        &(): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if matches!(event, xdg_toplevel::Event::Close) {
+            state.close_requested = true;
+        }
+    }
+}
+
 impl Dispatch<WpPresentationFeedback, ()> for State {
     fn event(
         state: &mut Self,
@@ -169,7 +196,8 @@ delegate_noop!(State: WlCompositor);
 delegate_noop!(State: ignore WlShm);
 delegate_noop!(State: WlShmPool);
 delegate_noop!(State: ignore WlSurface);
-delegate_noop!(State: ignore XdgToplevel);
+delegate_noop!(State: ZxdgDecorationManagerV1);
+delegate_noop!(State: ignore ZxdgToplevelDecorationV1);
 delegate_noop!(State: ignore WpPresentation);
 delegate_noop!(State: WpTearingControlManagerV1);
 delegate_noop!(State: WpTearingControlV1);
@@ -188,10 +216,15 @@ pub struct WaylandRenderer {
     presentation: Option<WpPresentation>,
     tearing: Option<WpTearingControlManagerV1>,
     dmabuf: Option<ZwpLinuxDmabufV1>,
+    decorations: Option<ZxdgDecorationManagerV1>,
     title: String,
+    /// Whether the user wants the window fullscreen; kept across window recreation.
+    fullscreen: bool,
     window: Option<Window>,
-    /// dmabuf `wl_buffer`s that the compositor may still read; freed once released.
-    dmabuf_buffers: Vec<(WlBuffer, Arc<AtomicBool>)>,
+    /// dmabuf `wl_buffer`s that the compositor may still read; freed once released. The lease of
+    /// the pool slot the buffer aliases is kept with it, so the producer does not write over a
+    /// buffer the compositor still reads.
+    dmabuf_buffers: Vec<(WlBuffer, Arc<AtomicBool>, Option<KeepAlive>)>,
     present_count: u64,
 }
 
@@ -202,6 +235,7 @@ struct Window {
     surface: WlSurface,
     xdg_surface: XdgSurface,
     toplevel: XdgToplevel,
+    decoration: Option<ZxdgToplevelDecorationV1>,
     tearing: Option<WpTearingControlV1>,
     /// Created on the first CPU frame, so dmabuf-only windows never allocate shared memory.
     shm: Option<ShmSlots>,
@@ -214,6 +248,12 @@ struct ShmSlots {
 }
 
 impl WaylandRenderer {
+    /// The connection this renderer presents on. Wayland connections are shared handles.
+    #[must_use]
+    pub fn connection(&self) -> Connection {
+        self.conn.clone()
+    }
+
     /// Connects to the display named by `WAYLAND_DISPLAY`.
     ///
     /// # Errors
@@ -239,6 +279,7 @@ impl WaylandRenderer {
         let tearing: Option<WpTearingControlManagerV1> = globals.bind(&qh, 1..=1, ()).ok();
         // Version 3 is the last with `modifier` events that list accepted formats.
         let dmabuf: Option<ZwpLinuxDmabufV1> = globals.bind(&qh, 3..=3, ()).ok();
+        let decorations: Option<ZxdgDecorationManagerV1> = globals.bind(&qh, 1..=1, ()).ok();
         let mut state = State::default();
         queue
             .roundtrip(&mut state)
@@ -254,7 +295,9 @@ impl WaylandRenderer {
             presentation,
             tearing,
             dmabuf,
+            decorations,
             title: title.to_owned(),
+            fullscreen: false,
             window: None,
             dmabuf_buffers: Vec::new(),
             present_count: 0,
@@ -281,6 +324,33 @@ impl WaylandRenderer {
     #[must_use]
     pub fn present_count(&self) -> u64 {
         self.present_count
+    }
+
+    /// Whether the compositor draws the window's title bar (`zxdg_decoration_manager_v1`).
+    /// Without it the window has no frame to move or close it by.
+    #[must_use]
+    pub fn server_decorations(&self) -> bool {
+        self.decorations.is_some()
+    }
+
+    /// Whether the user asked to close the window.
+    #[must_use]
+    pub fn close_requested(&self) -> bool {
+        self.state.close_requested
+    }
+
+    /// Makes the window fullscreen, or windowed again. The choice outlives a window that is
+    /// recreated for a new picture size.
+    pub fn set_fullscreen(&mut self, fullscreen: bool) {
+        if self.fullscreen == fullscreen {
+            return;
+        }
+        self.fullscreen = fullscreen;
+        if let Some(window) = &self.window {
+            apply_fullscreen(&window.toplevel, fullscreen);
+            window.surface.commit();
+            let _ = self.conn.flush();
+        }
     }
 
     /// Dispatches pending compositor events without blocking.
@@ -365,13 +435,13 @@ impl WaylandRenderer {
         while self
             .dmabuf_buffers
             .iter()
-            .filter(|(_, busy)| busy.load(Ordering::Acquire))
+            .filter(|(_, busy, _)| busy.load(Ordering::Acquire))
             .count()
             >= DMABUF_SLOTS
         {
             self.pump(remaining(deadline, "a released dmabuf wl_buffer")?)?;
         }
-        self.dmabuf_buffers.retain(|(buffer, busy)| {
+        self.dmabuf_buffers.retain(|(buffer, busy, _)| {
             let in_use = busy.load(Ordering::Acquire);
             if !in_use {
                 buffer.destroy();
@@ -414,7 +484,8 @@ impl WaylandRenderer {
             width,
             height,
         )?;
-        self.dmabuf_buffers.push((buffer, busy));
+        self.dmabuf_buffers
+            .push((buffer, busy, image.keepalive.clone()));
         Ok(())
     }
 
@@ -441,7 +512,7 @@ impl WaylandRenderer {
         if let Some(old) = self.window.take() {
             old.destroy();
         }
-        for (buffer, _) in self.dmabuf_buffers.drain(..) {
+        for (buffer, _, _) in self.dmabuf_buffers.drain(..) {
             buffer.destroy();
         }
         self.window = Some(self.create_window(width, height, format)?);
@@ -459,6 +530,15 @@ impl WaylandRenderer {
         let xdg_surface = self.wm_base.get_xdg_surface(&surface, &self.qh, ());
         let toplevel = xdg_surface.get_toplevel(&self.qh, ());
         toplevel.set_title(self.title.clone());
+        toplevel.set_app_id(crate::APP_ID.to_owned());
+        let decoration = self.decorations.as_ref().map(|manager| {
+            let decoration = manager.get_toplevel_decoration(&toplevel, &self.qh, ());
+            decoration.set_mode(DecorationMode::ServerSide);
+            decoration
+        });
+        if self.fullscreen {
+            apply_fullscreen(&toplevel, true);
+        }
         // Equal min and max size keeps the window at the frame size.
         toplevel.set_min_size(w, h);
         toplevel.set_max_size(w, h);
@@ -483,6 +563,7 @@ impl WaylandRenderer {
             surface,
             xdg_surface,
             toplevel,
+            decoration,
             tearing,
             shm: None,
         })
@@ -613,6 +694,10 @@ impl Window {
                 buffer.destroy();
             }
         }
+        // A decoration must go before its toplevel.
+        if let Some(decoration) = self.decoration {
+            decoration.destroy();
+        }
         self.toplevel.destroy();
         self.xdg_surface.destroy();
         self.surface.destroy();
@@ -681,5 +766,14 @@ impl std::fmt::Debug for WaylandRenderer {
             .field("title", &self.title)
             .field("present_count", &self.present_count)
             .finish_non_exhaustive()
+    }
+}
+
+/// Asks the compositor for the fullscreen state, on the output it chooses.
+fn apply_fullscreen(toplevel: &XdgToplevel, fullscreen: bool) {
+    if fullscreen {
+        toplevel.set_fullscreen(None);
+    } else {
+        toplevel.unset_fullscreen();
     }
 }

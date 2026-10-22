@@ -33,9 +33,11 @@ use std::time::{Duration, Instant};
 use crate::gpu_convert::GpuConvert;
 use lumen_capture_wlr::{StreamConfig, WlrCapture, read_pixels};
 use lumen_crypto::{PacketCipher, Role, SessionKeys};
+use lumen_encode_nvenc::NvencEncoder;
 use lumen_encode_vaapi::{EncoderConfig, H264Encoder, RateControl};
 use lumen_protocol::{
-    Capabilities, FrameBuffer, FrameSource, PixelFormat, VideoEncoder, VideoFrame, color,
+    Capabilities, EncodedFrame, FrameBuffer, FrameSource, PixelFormat, VideoEncoder, VideoFrame,
+    color,
 };
 use lumen_transport::estimator::Estimator;
 use lumen_transport::fec::{ParityHysteresis, ParityLevel};
@@ -50,7 +52,7 @@ use crate::persist::{PersistConfig, SessionKeeper, SessionState};
 use crate::resize::{CaptureRecovery, RecoveryPolicy, ResizeWatcher, Resolution};
 use crate::session;
 use crate::settings::HostSettings;
-use crate::stages::{StageRecorder, estimate_offset};
+use crate::stages::StageRecorder;
 
 /// Default control port, from `docs/protocol.md`.
 pub const DEFAULT_CONTROL_PORT: u16 = 24800;
@@ -108,6 +110,8 @@ pub struct HostConfig {
     pub prefer_cpu: bool,
     /// Encoder rate control.
     pub rate_control: RateControl,
+    /// Which hardware encoder the host uses.
+    pub encoder: EncoderBackend,
     /// Stop after this long. `None` runs until the client leaves.
     pub max_duration: Option<Duration>,
     /// Where the host writes the pairing code it shows. `None` means the
@@ -115,6 +119,9 @@ pub struct HostConfig {
     pub pairing_code_file: Option<std::path::PathBuf>,
     /// Which display server the host captures from.
     pub capture: DisplayServer,
+    /// Capture through the ScreenCast portal instead of wlroots screencopy, keeping the grant's
+    /// restore token in this file so the portal asks only once.
+    pub portal_token: Option<PathBuf>,
     /// The X display the host captures from. `None` reads `DISPLAY`.
     pub display: Option<String>,
     /// How long the host keeps the session after the client left.
@@ -144,6 +151,81 @@ pub struct HostConfig {
     pub web_addr: Option<SocketAddr>,
 }
 
+/// The hardware encoder of the host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EncoderBackend {
+    /// VA-API, on the render node the capture's buffers live on.
+    Vaapi,
+    /// NVENC, on the first NVIDIA GPU.
+    Nvenc,
+}
+
+impl EncoderBackend {
+    /// Parses the command-line name.
+    ///
+    /// # Errors
+    /// Returns a message for an unknown name.
+    pub fn parse(name: &str) -> Result<Self, String> {
+        match name {
+            "vaapi" => Ok(Self::Vaapi),
+            "nvenc" => Ok(Self::Nvenc),
+            other => Err(format!("unknown encoder {other:?}: use vaapi or nvenc")),
+        }
+    }
+}
+
+/// The encoder the encode stage runs, of either backend.
+enum Encoder {
+    Vaapi(H264Encoder),
+    Nvenc(NvencEncoder),
+}
+
+impl Encoder {
+    fn open(
+        backend: EncoderBackend,
+        config: EncoderConfig,
+        render_node: Option<&std::path::Path>,
+    ) -> Result<Self, String> {
+        match backend {
+            EncoderBackend::Vaapi => H264Encoder::new_on(config, render_node).map(Self::Vaapi),
+            EncoderBackend::Nvenc => NvencEncoder::new(config).map(Self::Nvenc),
+        }
+    }
+
+    const fn rate_control(&self) -> RateControl {
+        match self {
+            Self::Vaapi(e) => e.rate_control(),
+            Self::Nvenc(e) => e.rate_control(),
+        }
+    }
+
+    fn set_rate_control(&mut self, rate_control: RateControl) -> Result<(), String> {
+        match self {
+            Self::Vaapi(e) => e.set_rate_control(rate_control),
+            Self::Nvenc(e) => e.set_rate_control(rate_control),
+        }
+    }
+
+    fn as_dyn(&mut self) -> &mut dyn VideoEncoder {
+        match self {
+            Self::Vaapi(e) => e,
+            Self::Nvenc(e) => e,
+        }
+    }
+
+    fn encode(&mut self, frame: &VideoFrame) -> Result<EncodedFrame, String> {
+        self.as_dyn().encode(frame)
+    }
+
+    fn request_keyframe(&mut self) {
+        self.as_dyn().request_keyframe();
+    }
+
+    fn recover_from(&mut self, index: u64) -> bool {
+        self.as_dyn().recover_from(index)
+    }
+}
+
 impl Default for HostConfig {
     fn default() -> Self {
         Self {
@@ -156,9 +238,11 @@ impl Default for HostConfig {
             fps: 30,
             prefer_cpu: false,
             rate_control: RateControl::default(),
+            encoder: EncoderBackend::Vaapi,
             max_duration: None,
             pairing_code_file: None,
             capture: DisplayServer::Wayland,
+            portal_token: None,
             display: None,
             persist_timeout: Duration::ZERO,
             max_sessions: 1,
@@ -215,7 +299,12 @@ struct Datagrams {
 enum EncodeCommand {
     /// Resend one slice of an earlier frame, after a NACK.
     Retransmit { frame_id: u32, slice_index: u16 },
+    /// Recover from a loss by referencing the last frame the client decoded, after a `Recover`.
+    Recover { last_good: u32 },
 }
+
+/// How many sent frames the encode stage remembers, to map a frame id back to its source index.
+const SENT_FRAMES: usize = 64;
 
 /// Counters the stages share.
 #[derive(Debug, Default)]
@@ -227,6 +316,7 @@ pub struct Counters {
     capture_errors: AtomicU64,
     encode_errors: AtomicU64,
     keyframe_requests: AtomicU64,
+    recoveries: AtomicU64,
     retransmits: AtomicU64,
     duration_ms: AtomicU64,
     estimated_bytes_per_sec: AtomicU64,
@@ -256,6 +346,9 @@ pub struct PipelineStats {
     pub encode_errors: u64,
     /// Keyframes the client asked for.
     pub keyframe_requests: u64,
+    /// Losses the encoder recovered from without a keyframe.
+    #[serde(default)]
+    pub recoveries: u64,
     /// Slices resent after a NACK.
     pub retransmits: u64,
     /// How long the pipeline ran, in milliseconds.
@@ -603,23 +696,29 @@ impl HostPipeline {
         let (mut stream, peer) = (stream, peer);
         let established = session::establish(&mut stream, Role::Responder, host_capabilities())?;
         let mut channel = session::control_channel(stream, &established, Role::Responder)?;
+        let (identity, trusted) = {
+            let store = self.pairing.lock().map_err(|_| {
+                PipelineError::Admission("the pairing store is poisoned".to_string())
+            })?;
+            (store.identity().clone(), store.trusted_clients())
+        };
+        // A fresh code for every connection, so a failed guess teaches nothing about the next.
+        let code = lumen_crypto::PairingCode::random();
         let policy = session::PairingPolicy {
-            host_public: self.pairing.lock().map_or([0u8; 32], |p| p.public_bytes()),
-            trusted: self.pairing.lock().map_or_default(|p| p.trusted_clients()),
+            identity,
+            trusted,
             mode: self.pairing_mode,
-            client_nonce: established.remote_static.unwrap_or([0u8; 32]),
+            code,
             code_file: config.pairing_code_file.clone(),
         };
-        // The code the host is about to show, so the control plane can
-        // show it as well.
-        let host_public = self.pairing.lock().map_or([0u8; 32], |p| p.public_bytes());
-        let client_nonce = established.remote_static.unwrap_or([0u8; 32]);
+        // The code the host is about to show, so the control plane can show it as well.
         if let Ok(mut slot) = pairing_code.lock() {
-            *slot = Some(lumen_crypto::PairingCode::derive(&host_public, &client_nonce).value());
+            *slot = Some(code.value());
         }
         let authorised = session::host_hello(
             &mut channel,
             &established.keys,
+            &established.binding,
             host_capabilities(),
             &policy,
         )?;
@@ -709,17 +808,21 @@ impl HostPipeline {
         // The input socket shares the media address of the host, so the client reaches it on the
         // path it already uses for media.
         let input_addr = SocketAddr::new(config.media_addr.ip(), crate::input::INPUT_PORT);
-        // A host that shares an X11 display injects into it; otherwise the kernel gets the input.
+        // A host that shares an X11 display injects into it; a Wayland host injects into the
+        // compositor it captures, or into the kernel when the compositor has no virtual input.
         let target = match config.capture {
             DisplayServer::X11 => crate::input::InjectTarget::X11(config.display.clone()),
-            DisplayServer::Wayland => crate::input::InjectTarget::Uinput,
+            DisplayServer::Wayland => crate::input::InjectTarget::Wayland(config.output.clone()),
         };
+        // The virtual pads' motors go back to the client over the control channel.
+        let (rumble_tx, rumble_rx) = std::sync::mpsc::channel();
         let input_handle = crate::input::InputStage::start(
             input_addr,
             input_cipher,
             &target,
             (config.width, config.height),
             Arc::clone(&self.settings),
+            rumble_tx,
         );
 
         let send_handle = {
@@ -748,6 +851,7 @@ impl HostPipeline {
                 monitors: Arc::clone(monitors),
                 resolution_changes: Arc::clone(resolution_changes),
                 monitors_sent: false,
+                cursor_sent: None,
                 last_feedback: None,
                 settings: Arc::clone(&self.settings),
                 capture_size: (config.width, config.height),
@@ -756,6 +860,8 @@ impl HostPipeline {
                     config.clipboard_test.clone(),
                 ),
                 clipboard_sent: None,
+                rumble_rx,
+                clock: lumen_audio::MinRttFilter::new(),
             };
             thread::spawn(move || stage.run())
         };
@@ -939,14 +1045,45 @@ enum CaptureSource {
     Wayland(Box<WlrCapture>),
     /// An X11 server, captured through DRI3, MIT-SHM or GetImage.
     X11(Box<lumen_capture_x11::X11Capture>),
+    /// A ScreenCast portal grant, captured through PipeWire.
+    Portal(Box<lumen_capture_pipewire::PortalCapture>),
 }
 
 impl CaptureSource {
+    /// The cursor shape as a message, when this capture reports the cursor apart from the
+    /// frames. Only X11 does: wlroots screencopy and the portal draw it into the frames.
+    fn cursor(&self) -> Option<ControlMessage> {
+        let Self::X11(capture) = self else {
+            return None;
+        };
+        let image = capture.cursor().ok()?;
+        // XFixes hands out at most 64 kilopixels; a larger cursor is not one a client shows.
+        let width = if image.argb.len() == usize::from(image.width) * usize::from(image.height) {
+            image.width
+        } else {
+            0
+        };
+        let height = if width == 0 { 0 } else { image.height };
+        Some(ControlMessage::Cursor {
+            serial: image.serial,
+            hot_x: image.xhot,
+            hot_y: image.yhot,
+            width,
+            height,
+            argb: if width == 0 {
+                Vec::new()
+            } else {
+                image.argb.iter().flat_map(|p| p.to_le_bytes()).collect()
+            },
+        })
+    }
+
     /// The next frame, when there is one.
     fn poll_frame(&mut self) -> Option<VideoFrame> {
         match self {
             Self::Wayland(capture) => capture.poll_frame(),
             Self::X11(capture) => capture.poll_frame(),
+            Self::Portal(capture) => capture.poll_frame(),
         }
     }
 
@@ -955,6 +1092,9 @@ impl CaptureSource {
         match self {
             Self::Wayland(capture) => capture.take_error().map(|e| e.to_string()),
             Self::X11(capture) => capture.take_error().map(|e| e.to_string()),
+            // shortcut: a portal stream that stops only stops sending frames, so the capture is
+            // never reopened; report the stream state when a compositor is seen to end it.
+            Self::Portal(_) => None,
         }
     }
 
@@ -963,6 +1103,8 @@ impl CaptureSource {
         match self {
             Self::Wayland(capture) => capture.set_fps(fps),
             Self::X11(capture) => capture.set_fps(fps),
+            // The producer paces the stream by the maximum rate negotiated at connect time.
+            Self::Portal(_) => {}
         }
     }
 
@@ -971,6 +1113,7 @@ impl CaptureSource {
         match self {
             Self::Wayland(capture) => capture.render_node().map(Path::to_path_buf),
             Self::X11(capture) => capture.render_node().map(Path::to_path_buf),
+            Self::Portal(_) => None,
         }
     }
 }
@@ -1004,6 +1147,20 @@ struct CaptureStage {
 impl CaptureStage {
     /// Open the capture source of the configured backend.
     fn open(config: &HostConfig) -> Result<CaptureSource, String> {
+        if let Some(token_file) = &config.portal_token {
+            let token = std::fs::read_to_string(token_file).ok();
+            let capture = lumen_capture_pipewire::PortalCapture::open(
+                token.as_deref().map(str::trim).filter(|t| !t.is_empty()),
+            )?;
+            // The portal may hand out a new token for every grant; the newest one restores.
+            if let Some(new) = capture.restore_token()
+                && token.as_deref().map(str::trim) != Some(new)
+                && let Err(e) = crate::pairing::write_owner_only(token_file, new.as_bytes())
+            {
+                crate::host_log!(warn "lumen-host: cannot keep the portal restore token: {e}");
+            }
+            return Ok(CaptureSource::Portal(Box::new(capture)));
+        }
         match config.capture {
             DisplayServer::Wayland => {
                 let stream_config = StreamConfig {
@@ -1038,6 +1195,9 @@ impl CaptureStage {
     /// A capture that cannot be opened at all is retried, because the
     /// compositor may not be up yet when the host starts.
     fn run(self) {
+        // The capture thread should not wait behind a game that uses every core.
+        crate::thread_qos::boost_thread_priority(true);
+        let mut metronome = crate::metronome::Metronome::new();
         let policy = RecoveryPolicy::default();
         let mut failures = 0u32;
         let mut capture = loop {
@@ -1076,12 +1236,22 @@ impl CaptureStage {
         });
         self.list_monitors();
         let mut failures = 0u32;
+        let mut cursor_shape: Option<ControlMessage> = None;
 
         while self.running.load(Ordering::SeqCst) {
             // The control plane changes the rate at run time, so the capture follows it.
             capture.set_fps(self.settings.fps());
             if let Some(frame) = capture.poll_frame() {
                 failures = 0;
+                // A changed shape replaces the published one; the control stages send it.
+                if let Some(fresh) = capture.cursor()
+                    && cursor_serial(cursor_shape.as_ref()) != cursor_serial(Some(&fresh))
+                {
+                    cursor_shape = Some(fresh.clone());
+                    if let Ok(mut slot) = self.settings.cursor.lock() {
+                        *slot = Some(fresh);
+                    }
+                }
                 let size = Resolution::new(frame.width, frame.height).ok();
                 if let Some(size) = size
                     && let Ok(mut watcher) = self.resize.lock()
@@ -1135,6 +1305,14 @@ impl CaptureStage {
                 failures = failures.saturating_add(1);
                 self.counters.capture_errors.fetch_add(1, Ordering::Relaxed);
                 crate::host_log!(warn "lumen-host: capture error: {e}");
+                // A disturbance that repeats with a steady period is a machine, not the network:
+                // the log names the period so the cycle can be looked for.
+                if let Some(period) = metronome.note(Instant::now()) {
+                    crate::host_log!(warn
+                        "lumen-host: the capture errors repeat every {:.2}s, which points at a periodic disturbance",
+                        period.as_secs_f64()
+                    );
+                }
                 match policy.action_after(failures) {
                     CaptureRecovery::Retry => {}
                     CaptureRecovery::Reopen => {
@@ -1332,6 +1510,8 @@ impl EncodeStage {
 
     /// Encode frames and slice them into sealed datagrams.
     fn run(mut self) {
+        // The encode thread should not wait behind a game that uses every core.
+        crate::thread_qos::boost_thread_priority(true);
         let encoder_config =
             EncoderConfig::new(self.config.width, self.config.height, self.settings.fps())
                 .with_rate_control(self.rate_control());
@@ -1348,15 +1528,16 @@ impl EncodeStage {
             }
             thread::sleep(Duration::from_millis(10));
         };
-        let mut encoder = match H264Encoder::new_on(encoder_config, render_node.as_deref()) {
-            Ok(e) => e,
-            Err(e) => {
-                crate::host_log!(warn "lumen-host: cannot create the encoder: {e}");
-                self.counters.encode_errors.fetch_add(1, Ordering::Relaxed);
-                self.running.store(false, Ordering::SeqCst);
-                return;
-            }
-        };
+        let mut encoder =
+            match Encoder::open(self.config.encoder, encoder_config, render_node.as_deref()) {
+                Ok(e) => e,
+                Err(e) => {
+                    crate::host_log!(warn "lumen-host: cannot create the encoder: {e}");
+                    self.counters.encode_errors.fetch_add(1, Ordering::Relaxed);
+                    self.running.store(false, Ordering::SeqCst);
+                    return;
+                }
+            };
         let mut sender = match session::media_sender(&self.keys, self.aead) {
             Ok(s) => s,
             Err(e) => {
@@ -1365,10 +1546,29 @@ impl EncodeStage {
                 return;
             }
         };
+        // The frame id the client names and the source index the encoder knows, newest last.
+        let mut sent: std::collections::VecDeque<(u32, u64)> =
+            std::collections::VecDeque::with_capacity(SENT_FRAMES);
 
         while self.running.load(Ordering::SeqCst) {
             while let Ok(command) = self.commands.try_recv() {
                 match command {
+                    EncodeCommand::Recover { last_good } => {
+                        let index = sent
+                            .iter()
+                            .find(|(frame_id, _)| *frame_id == last_good)
+                            .map(|(_, index)| *index);
+                        let recovered = index.is_some_and(|index| encoder.recover_from(index));
+                        if recovered {
+                            self.counters.recoveries.fetch_add(1, Ordering::Relaxed);
+                        } else {
+                            // The frame is gone from the window: only a keyframe recovers.
+                            encoder.request_keyframe();
+                            self.counters
+                                .keyframe_requests
+                                .fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
                     EncodeCommand::Retransmit {
                         frame_id,
                         slice_index,
@@ -1501,7 +1701,7 @@ impl EncodeStage {
                         let config =
                             EncoderConfig::new(frame.width, frame.height, self.settings.fps())
                                 .with_rate_control(self.rate_control());
-                        match H264Encoder::new_on(config, render_node.as_deref()) {
+                        match Encoder::open(self.config.encoder, config, render_node.as_deref()) {
                             Ok(fresh) => {
                                 crate::host_log!(info
                                     "lumen-host: the encoder is now {}x{}",
@@ -1524,6 +1724,10 @@ impl EncodeStage {
                             match sender.packetize(&encoded.data, encoded.capture_ts_us) {
                                 Ok(batch) => {
                                     let frame_id = sender.last_frame_id();
+                                    if sent.len() == SENT_FRAMES {
+                                        sent.pop_front();
+                                    }
+                                    sent.push_back((frame_id, encoded.index));
                                     let encode_end = monotonic_us();
                                     if let Ok(mut stages) = self.stages.lock() {
                                         stages.record_host_start(
@@ -1577,6 +1781,8 @@ struct SendStage {
 impl SendStage {
     /// Pace the datagrams onto the media socket.
     fn run(self) {
+        // The send thread is a step below the capture: it must not outrank the compositor.
+        crate::thread_qos::boost_thread_priority(false);
         let mut pacer = Pacer::new(PACER_BYTES_PER_SEC, Duration::from_millis(100));
         while self.running.load(Ordering::SeqCst) {
             match self.datagrams.recv_timeout(SEND_POLL) {
@@ -1630,6 +1836,8 @@ struct ControlStage {
     resolution_changes: Arc<Mutex<Vec<(u32, u32)>>>,
     /// Whether the list of outputs was already sent.
     monitors_sent: bool,
+    /// The serial of the cursor shape this client has.
+    cursor_sent: Option<u32>,
     /// The last link feedback, so the cumulative counts can be differenced.
     last_feedback: Option<(u64, u64)>,
     /// The settings the control plane changes.
@@ -1642,6 +1850,10 @@ struct ControlStage {
     clipboard_rx: std::sync::mpsc::Receiver<String>,
     /// The last clipboard text the host sent, so it is not sent twice.
     clipboard_sent: Option<String>,
+    /// What games asked of the virtual pads' motors, from the input stage.
+    rumble_rx: std::sync::mpsc::Receiver<lumen_input_inject::Rumble>,
+    /// The recent ping exchanges; the fastest one gives the clock offset.
+    clock: lumen_audio::MinRttFilter,
 }
 
 impl ControlStage {
@@ -1686,6 +1898,8 @@ impl ControlStage {
             }
             self.send_monitors();
             self.send_resolution_changes();
+            self.send_cursor();
+            self.send_rumble();
             // The clipboard is read on a thread of its own, so the control
             // loop only has to look at what it found.
             self.send_clipboard();
@@ -1695,6 +1909,9 @@ impl ControlStage {
                         .keyframe_requests
                         .fetch_add(1, Ordering::Relaxed);
                     self.keyframe_requested.store(true, Ordering::Relaxed);
+                }
+                Ok(Some(ControlMessage::Recover { last_good })) => {
+                    let _ = self.commands.try_send(EncodeCommand::Recover { last_good });
                 }
                 Ok(Some(ControlMessage::Clipboard { text })) => {
                     // The client took the clipboard and sent it back, so the
@@ -1795,7 +2012,7 @@ impl ControlStage {
                     // when the ping went out, `reply_ts_us` is the client
                     // clock when it answered, and now is the host clock when
                     // the answer arrived.
-                    let offset = estimate_offset(ts_us, reply_ts_us, monotonic_us());
+                    let offset = self.clock.push(ts_us, reply_ts_us, monotonic_us());
                     if let Ok(mut stages) = self.stages.lock() {
                         stages.set_offset(offset);
                     }
@@ -1856,6 +2073,36 @@ impl ControlStage {
         self.monitors_sent = true;
     }
 
+    /// Sends the host's cursor shape when it changed since the last one this client got.
+    fn send_cursor(&mut self) {
+        let Some(message) = self.settings.cursor.lock().ok().and_then(|c| c.clone()) else {
+            return;
+        };
+        let ControlMessage::Cursor { serial, .. } = &message else {
+            return;
+        };
+        if self.cursor_sent == Some(*serial) {
+            return;
+        }
+        self.cursor_sent = Some(*serial);
+        if let Err(e) = self.channel.send(&message) {
+            crate::host_log!(warn "lumen-host: cannot send the cursor: {e}");
+        }
+    }
+
+    /// Forwards what games asked of the virtual pads' motors to the client.
+    fn send_rumble(&mut self) {
+        while let Ok(lumen_input_inject::Rumble { pad, strong, weak }) = self.rumble_rx.try_recv() {
+            if let Err(e) = self
+                .channel
+                .send(&ControlMessage::Rumble { pad, strong, weak })
+            {
+                crate::host_log!(warn "lumen-host: cannot send the rumble: {e}");
+                return;
+            }
+        }
+    }
+
     /// Send the mode changes the capture stage saw to the client.
     fn send_resolution_changes(&mut self) {
         let changes = match self.resolution_changes.lock() {
@@ -1870,6 +2117,14 @@ impl ControlStage {
             }
             self.counters.resize_events.fetch_add(1, Ordering::Relaxed);
         }
+    }
+}
+
+/// The serial of a cursor message.
+fn cursor_serial(message: Option<&ControlMessage>) -> Option<u32> {
+    match message {
+        Some(ControlMessage::Cursor { serial, .. }) => Some(*serial),
+        _ => None,
     }
 }
 
@@ -1898,6 +2153,7 @@ pub(crate) fn snapshot(
         capture_errors: counters.capture_errors.load(Ordering::Relaxed),
         encode_errors: counters.encode_errors.load(Ordering::Relaxed),
         keyframe_requests: counters.keyframe_requests.load(Ordering::Relaxed),
+        recoveries: counters.recoveries.load(Ordering::Relaxed),
         retransmits: counters.retransmits.load(Ordering::Relaxed),
         duration_ms: counters.duration_ms.load(Ordering::Relaxed),
         estimated_bytes_per_sec: counters.estimated_bytes_per_sec.load(Ordering::Relaxed),

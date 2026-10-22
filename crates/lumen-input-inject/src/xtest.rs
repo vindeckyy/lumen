@@ -243,7 +243,7 @@ mod tests {
     /// throwaway display such as Xvfb for that.
     #[test]
     fn absolute_motion_reaches_the_pointer() {
-        if std::env::var("LUMEN_XTEST_MOVE_POINTER").as_deref() != Ok("1") {
+        if !crate::knobs::xtest_may_move_pointer() {
             eprintln!("skip: set LUMEN_XTEST_MOVE_POINTER=1 to move the pointer on the X display");
             return;
         }

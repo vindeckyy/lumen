@@ -16,6 +16,7 @@ lumen-transport = { path = "../crates/lumen-transport" }
 lumen-crypto = { path = "../crates/lumen-crypto" }
 lumen-host-service = { path = "../crates/lumen-host-service" }
 lumen-audio = { path = "../crates/lumen-audio" }
+lumen-decode-vaapi = { path = "../crates/lumen-decode-vaapi" }
 
 [[bin]]
 name = "protocol_input"
@@ -135,3 +136,17 @@ bench = false
 # bundled C build. See vendor/opus/Cargo.toml.
 [patch.crates-io]
 opus = { path = "../vendor/opus" }
+
+[[bin]]
+name = "h264_bitstream"
+path = "fuzz_targets/h264_bitstream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "h264_dpb"
+path = "fuzz_targets/h264_dpb.rs"
+test = false
+doc = false
+bench = false

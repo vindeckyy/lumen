@@ -118,8 +118,8 @@ impl VaDisplay {
     pub fn open_preferred() -> VaResult<Self> {
         VaLibrary::load()?;
         let mut candidates: Vec<PathBuf> = Vec::new();
-        if let Some(path) = std::env::var_os("LUMEN_VA_DEVICE") {
-            candidates.push(PathBuf::from(path));
+        if let Some(path) = crate::knobs::va_device() {
+            candidates.push(path);
         }
         candidates.push("/dev/dri/renderD129".into());
         candidates.push("/dev/dri/renderD128".into());

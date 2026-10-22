@@ -1,0 +1,16 @@
+[package]
+publish = false
+name = "lumen-update-check"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Signed update check for the Lumen host and client."
+
+[dependencies]
+ed25519-dalek = { workspace = true }
+
+[lints]
+workspace = true

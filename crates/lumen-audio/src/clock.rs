@@ -11,9 +11,11 @@
 //! `(t0 + t2) / 2` on the host's clock, so the offset is
 //! `t1 - (t0 + t2) / 2`.
 //!
-//! This mirrors `estimate_offset` in `crates/lumen-host-service/src/stages.rs`.
-//! The audio crate must not depend on the host service, so the calculation
-//! lives here as well. Keep the two in step.
+//! A single exchange is only as good as its symmetry: a packet that waits in
+//! a queue on one direction shifts the midpoint by half the wait. The host and
+//! the client therefore feed every exchange into a [`MinRttFilter`], which
+//! answers with the offset of the fastest recent exchange, the one with the
+//! least queuing. The window slides, so the estimate follows clock drift.
 
 /// Estimate the offset between the host clock and the client clock.
 ///
@@ -113,6 +115,40 @@ impl ClockOffset {
     }
 }
 
+/// How many recent exchanges [`MinRttFilter`] keeps. At the 500 ms ping
+/// interval this is eight seconds of history.
+const MIN_RTT_WINDOW: usize = 16;
+
+/// The offset of the fastest of the recent ping exchanges.
+#[derive(Debug, Clone, Default)]
+pub struct MinRttFilter {
+    /// `(round trip, offset)` of each exchange, oldest first.
+    samples: std::collections::VecDeque<(u64, i64)>,
+}
+
+impl MinRttFilter {
+    /// An empty filter.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add one exchange and return the offset of the fastest exchange in the
+    /// window. The arguments are those of [`estimate_offset`].
+    pub fn push(&mut self, t0_local_us: u64, t1_remote_us: u64, t2_local_us: u64) -> i64 {
+        let rtt = t2_local_us.saturating_sub(t0_local_us);
+        let offset = estimate_offset(t0_local_us, t1_remote_us, t2_local_us);
+        if self.samples.len() == MIN_RTT_WINDOW {
+            self.samples.pop_front();
+        }
+        self.samples.push_back((rtt, offset));
+        self.samples
+            .iter()
+            .min_by_key(|(rtt, _)| *rtt)
+            .map_or(offset, |(_, offset)| *offset)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,6 +162,24 @@ mod tests {
         assert_eq!(estimate_offset(1_000_000, 1_010_500, 1_001_000), 10_000);
         // The client clock runs 10 ms behind the host clock.
         assert_eq!(estimate_offset(1_000_000, 990_500, 1_001_000), -10_000);
+    }
+
+    #[test]
+    fn the_filter_ignores_a_queued_exchange_and_slides() {
+        let mut filter = MinRttFilter::new();
+        // A fast symmetric exchange: offset 10 ms.
+        assert_eq!(filter.push(1_000_000, 1_010_500, 1_001_000), 10_000);
+        // The return path queued 20 ms: the raw estimate says 0, the filter keeps 10 ms.
+        assert_eq!(estimate_offset(2_000_000, 2_010_500, 2_021_000), 0);
+        assert_eq!(filter.push(2_000_000, 2_010_500, 2_021_000), 10_000);
+        // Once the fast exchange leaves the window, slower ones are all there is.
+        for i in 0..MIN_RTT_WINDOW as u64 {
+            let t0 = 3_000_000 + i * 10_000;
+            filter.push(t0, t0 + 12_000, t0 + 4_000);
+        }
+        assert_eq!(filter.push(9_000_000, 9_012_000, 9_004_000), 10_000);
+        let t0 = 10_000_000;
+        assert_eq!(filter.push(t0, t0 + 13_000, t0 + 2_000), 12_000);
     }
 
     #[test]

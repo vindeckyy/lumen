@@ -53,6 +53,13 @@ pub struct HostReport {
     /// microseconds. One sample per played frame.
     #[serde(default)]
     pub a_vs_skew_us: Vec<i64>,
+    /// The picture the client settled on, as width by height. Older client
+    /// reports do not carry it.
+    #[serde(default)]
+    pub final_picture: String,
+    /// How many times the quality ladder asked for another picture.
+    #[serde(default)]
+    pub quality_steps: u32,
 }
 
 /// The client half of a run.
@@ -91,6 +98,13 @@ pub struct ClientReport {
     /// microseconds. One sample per played frame.
     #[serde(default)]
     pub a_vs_skew_us: Vec<i64>,
+    /// The picture the client settled on, as width by height. Older client
+    /// reports do not carry it.
+    #[serde(default)]
+    pub final_picture: String,
+    /// How many times the quality ladder asked for another picture.
+    #[serde(default)]
+    pub quality_steps: u32,
 }
 
 /// Read a host report from a JSON file.
@@ -177,6 +191,11 @@ pub fn merge(
     report.counters.decode_errors = client.decode_errors;
     report.counters.frames_rebuilt = client.frames_rebuilt;
     report.counters.zero_copy = client.zero_copy;
+    report
+        .counters
+        .final_picture
+        .clone_from(&client.final_picture);
+    report.counters.quality_steps = client.quality_steps;
     report.counters.retransmits = host.retransmits;
     report.counters.frames_gpu_converted = host.frames_gpu_converted;
     report.counters.packets_lost = host

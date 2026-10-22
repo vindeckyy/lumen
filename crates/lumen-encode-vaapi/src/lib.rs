@@ -7,7 +7,9 @@
 mod buffer;
 mod config;
 mod headers;
-mod nal;
+mod knobs;
+pub mod nal;
+mod refs;
 mod session;
 
 pub use config::{DEFAULT_QP, EncoderConfig, H264Profile, MAX_EDGE, RateControl};

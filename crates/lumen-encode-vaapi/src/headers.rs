@@ -152,8 +152,10 @@ pub(crate) fn sps(cfg: &EncoderConfig, profile: H264Profile) -> PackedHeader {
     }
     w.ue(LOG2_MAX_FRAME_NUM_MINUS4);
     w.ue(2); // pic_order_cnt_type: POC derived from frame_num, valid without B-frames
-    w.ue(1); // max_num_ref_frames
-    w.bit(false); // gaps_in_frame_num_value_allowed_flag
+    w.ue(crate::buffer::ref_frames(cfg)); // max_num_ref_frames
+    // A recovery after a loss skips the frame_nums the client never got; with the flag the
+    // decoder infers them (8.2.5.2) instead of treating the gap as an error.
+    w.bit(true); // gaps_in_frame_num_value_allowed_flag
     let (mbs_w, mbs_h) = macroblocks(cfg);
     w.ue(mbs_w - 1);
     w.ue(mbs_h - 1); // pic_height_in_map_units_minus1 (frame_mbs_only_flag is set)
@@ -169,15 +171,15 @@ pub(crate) fn sps(cfg: &EncoderConfig, profile: H264Profile) -> PackedHeader {
         w.ue(crop_bottom);
     }
     w.bit(true); // vui_parameters_present_flag
-    write_vui(&mut w, cfg.fps);
+    write_vui(&mut w, cfg.fps, crate::buffer::ref_frames(cfg));
     let rbsp = w.finish_aligned();
     let bits = rbsp.len() * 8;
     packed(sys::VAEncPackedHeaderSequence, NAL_TYPE_SPS, &rbsp, bits)
 }
 
 /// `vui_parameters()`: timing for the frame rate, and a bitstream restriction that
-/// promises no reordering with a one-frame DPB, so decoders output on arrival.
-fn write_vui(w: &mut BitWriter, fps: u32) {
+/// promises no reordering, so decoders output on arrival.
+fn write_vui(w: &mut BitWriter, fps: u32, ref_frames: u32) {
     w.bit(false); // aspect_ratio_info_present_flag
     w.bit(false); // overscan_info_present_flag
     w.bit(false); // video_signal_type_present_flag
@@ -196,7 +198,7 @@ fn write_vui(w: &mut BitWriter, fps: u32) {
     w.ue(16); // log2_max_mv_length_horizontal
     w.ue(16); // log2_max_mv_length_vertical
     w.ue(0); // max_num_reorder_frames
-    w.ue(1); // max_dec_frame_buffering
+    w.ue(ref_frames); // max_dec_frame_buffering: at least max_num_ref_frames
 }
 
 /// `pic_parameter_set_rbsp()` matching `pic_bits` and `h264_picture` in `buffer.rs`.
@@ -259,7 +261,12 @@ pub(crate) fn slice(profile: H264Profile, pic: &Picture) -> PackedHeader {
     if !pic.idr {
         w.bit(true); // num_ref_idx_active_override_flag
         w.ue(0); // num_ref_idx_l0_active_minus1
-        w.bit(false); // ref_pic_list_modification_flag_l0
+        w.bit(pic.modification.is_some()); // ref_pic_list_modification_flag_l0
+        if let Some(abs_diff_pic_num_minus1) = pic.modification {
+            w.ue(0); // modification_of_pic_nums_idc: subtract from the predicted PicNum
+            w.ue(abs_diff_pic_num_minus1);
+            w.ue(3); // end of the modifications
+        }
     }
     if pic.idr {
         w.bit(false); // no_output_of_prior_pics_flag
@@ -358,7 +365,7 @@ mod tests {
 
     #[test]
     fn slice_header_nal_type_follows_picture() {
-        let idr = Picture::plan(None, false, 0);
+        let idr = Picture::plan(None, 0, false, 0);
         let s = slice(H264Profile::High, &idr);
         assert_eq!(s.bytes[4], 0x65, "IDR slice: ref_idc 3, type 5");
         assert_eq!(s.ty, sys::VAEncPackedHeaderSlice);
@@ -368,7 +375,7 @@ mod tests {
             frame_num: 0,
             poc: 0,
         };
-        let p = Picture::plan(Some(last), false, 0);
+        let p = Picture::plan(Some(last), 1, false, 0);
         assert_eq!(
             slice(H264Profile::High, &p).bytes[4],
             0x61,

@@ -52,11 +52,40 @@ pub enum ControlMessage {
         session_id: u32,
         /// Whether the client is authorised.
         paired: bool,
+        /// The host's Ed25519 public key, so the client can pin the host it paired with.
+        host_key: [u8; 32],
+        /// The host's pairing confirmation, when this session paired the client; zero otherwise.
+        confirm: [u8; 32],
+        /// The host's signature over the host proof, so the client knows the peer owns `host_key`.
+        signature: [u8; 64],
     },
     /// The client asks for a keyframe.
     RequestIdr {
         /// The frame the client is missing.
         frame_id: u32,
+    },
+    /// The client lost frames and asks the host to recover from the last frame it decoded,
+    /// without a keyframe. A host that no longer holds that frame sends a keyframe instead.
+    Recover {
+        /// The newest frame the client decoded.
+        last_good: u32,
+    },
+    /// The host's cursor changed shape. The client shows it as its own cursor over the
+    /// stream, so the pointer moves without waiting for the network. The host stops drawing it
+    /// into the frames.
+    Cursor {
+        /// Changes with every new shape.
+        serial: u32,
+        /// The hotspot, in pixels from the top left.
+        hot_x: u16,
+        /// The hotspot, in pixels from the top left.
+        hot_y: u16,
+        /// The width in pixels; 0 hides the cursor.
+        width: u16,
+        /// The height in pixels.
+        height: u16,
+        /// Premultiplied ARGB, one little-endian `u32` per pixel, row by row.
+        argb: Vec<u8>,
     },
     /// The client reports missing slices.
     Nack {
@@ -103,22 +132,25 @@ pub enum ControlMessage {
     /// The session ends.
     Bye,
     /// The host asks the client to prove it owns its identity key, and, when
-    /// the client is not trusted yet, to answer a pairing code.
+    /// the client is not trusted yet, to run the pairing exchange.
     PairingChallenge {
-        /// The pairing code the host shows.
-        code: u32,
         /// The host's Ed25519 public key, so the client can name it.
         host_key: [u8; 32],
         /// A fresh nonce. The client signs it, so the proof cannot be
         /// replayed into another session.
         nonce: [u8; 32],
+        /// The host's SPAKE2 message over the pairing code it shows. All zero
+        /// when the host already trusts the client and asks for no code.
+        pake: [u8; 33],
     },
     /// The client answers a pairing challenge.
     PairingResponse {
-        /// The code the user typed. Zero when the client is already trusted.
-        code: u32,
         /// The client's signature over the proof message.
         signature: [u8; 64],
+        /// The client's SPAKE2 message. All zero when no code was asked for or typed.
+        pake: [u8; 33],
+        /// The client's pairing confirmation. Zero when no code was asked for or typed.
+        confirm: [u8; 32],
     },
     /// The client reports what it received, so the host can estimate the loss
     /// and the round trip time.
@@ -158,6 +190,16 @@ pub enum ControlMessage {
         decode_ts_us: u64,
         /// When the client presented it, client clock.
         present_ts_us: u64,
+    },
+    /// The host's virtual pad `pad` was told to rumble: the strong (low-frequency) and weak
+    /// (high-frequency) motor, 0 to 255. Zero for both stops it.
+    Rumble {
+        /// The pad index of the client's gamepad.
+        pad: u8,
+        /// The strong motor.
+        strong: u8,
+        /// The weak motor.
+        weak: u8,
     },
 }
 
@@ -391,16 +433,49 @@ fn encode(message: &ControlMessage) -> Result<Vec<u8>, ControlError> {
             capabilities,
             session_id,
             paired,
+            host_key,
+            confirm,
+            signature,
         } => {
             out.push(2);
             out.push(*version);
             out.extend_from_slice(&capabilities.bits().to_le_bytes());
             out.extend_from_slice(&session_id.to_le_bytes());
             out.push(u8::from(*paired));
+            out.extend_from_slice(host_key);
+            out.extend_from_slice(confirm);
+            out.extend_from_slice(signature);
         }
         ControlMessage::RequestIdr { frame_id } => {
             out.push(3);
             out.extend_from_slice(&frame_id.to_le_bytes());
+        }
+        ControlMessage::Recover { last_good } => {
+            out.push(16);
+            out.extend_from_slice(&last_good.to_le_bytes());
+        }
+        ControlMessage::Cursor {
+            serial,
+            hot_x,
+            hot_y,
+            width,
+            height,
+            argb,
+        } => {
+            if argb.len() != usize::from(*width) * usize::from(*height) * 4 {
+                return Err(ControlError::Malformed(
+                    "cursor pixels do not match its size",
+                ));
+            }
+            out.push(17);
+            out.extend_from_slice(&serial.to_le_bytes());
+            for v in [hot_x, hot_y, width, height] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+            out.extend_from_slice(argb);
+        }
+        ControlMessage::Rumble { pad, strong, weak } => {
+            out.extend_from_slice(&[18, *pad, *strong, *weak]);
         }
         ControlMessage::Nack { frame_id, slices } => {
             let count = u16::try_from(slices.len())
@@ -446,19 +521,24 @@ fn encode(message: &ControlMessage) -> Result<Vec<u8>, ControlError> {
         }
         ControlMessage::Bye => out.push(10),
         ControlMessage::PairingChallenge {
-            code,
             host_key,
             nonce,
+            pake,
         } => {
             out.push(11);
-            out.extend_from_slice(&code.to_le_bytes());
             out.extend_from_slice(host_key);
             out.extend_from_slice(nonce);
+            out.extend_from_slice(pake);
         }
-        ControlMessage::PairingResponse { code, signature } => {
+        ControlMessage::PairingResponse {
+            signature,
+            pake,
+            confirm,
+        } => {
             out.push(12);
-            out.extend_from_slice(&code.to_le_bytes());
             out.extend_from_slice(signature);
+            out.extend_from_slice(pake);
+            out.extend_from_slice(confirm);
         }
         ControlMessage::LinkFeedback {
             received,
@@ -548,8 +628,34 @@ fn decode(buf: &[u8]) -> Result<ControlMessage, ControlError> {
             capabilities: Capabilities::from_bits_truncate(r.u64()?),
             session_id: r.u32()?,
             paired: r.u8()? != 0,
+            host_key: r.array()?,
+            confirm: r.array()?,
+            signature: r.array()?,
         },
         3 => ControlMessage::RequestIdr { frame_id: r.u32()? },
+        16 => ControlMessage::Recover {
+            last_good: r.u32()?,
+        },
+        17 => {
+            let serial = r.u32()?;
+            let (hot_x, hot_y, width, height) = (r.u16()?, r.u16()?, r.u16()?, r.u16()?);
+            let argb = r
+                .bytes(usize::from(width) * usize::from(height) * 4)?
+                .to_vec();
+            ControlMessage::Cursor {
+                serial,
+                hot_x,
+                hot_y,
+                width,
+                height,
+                argb,
+            }
+        }
+        18 => ControlMessage::Rumble {
+            pad: r.u8()?,
+            strong: r.u8()?,
+            weak: r.u8()?,
+        },
         4 => {
             let frame_id = r.u32()?;
             let count = r.u16()?;
@@ -584,13 +690,14 @@ fn decode(buf: &[u8]) -> Result<ControlMessage, ControlError> {
         },
         10 => ControlMessage::Bye,
         11 => ControlMessage::PairingChallenge {
-            code: r.u32()?,
             host_key: r.array::<32>()?,
             nonce: r.array::<32>()?,
+            pake: r.array::<33>()?,
         },
         12 => ControlMessage::PairingResponse {
-            code: r.u32()?,
             signature: r.array::<64>()?,
+            pake: r.array::<33>()?,
+            confirm: r.array::<32>()?,
         },
         14 => ControlMessage::LinkFeedback {
             received: r.u64()?,
@@ -704,10 +811,37 @@ mod tests {
             ControlMessage::HelloAck {
                 version: 1,
                 capabilities: Capabilities::H264,
+                host_key: [0; 32],
                 session_id: 0xdead_beef,
                 paired: true,
+                confirm: [3; 32],
+                signature: [4; 64],
+            },
+            ControlMessage::PairingChallenge {
+                host_key: [1; 32],
+                nonce: [2; 32],
+                pake: [5; 33],
+            },
+            ControlMessage::PairingResponse {
+                signature: [6; 64],
+                pake: [8; 33],
+                confirm: [9; 32],
             },
             ControlMessage::RequestIdr { frame_id: 99 },
+            ControlMessage::Recover { last_good: 98 },
+            ControlMessage::Cursor {
+                serial: 3,
+                hot_x: 1,
+                hot_y: 2,
+                width: 2,
+                height: 1,
+                argb: vec![1, 2, 3, 4, 5, 6, 7, 8],
+            },
+            ControlMessage::Rumble {
+                pad: 2,
+                strong: 200,
+                weak: 7,
+            },
             ControlMessage::Nack {
                 frame_id: 99,
                 slices: vec![1, 2, 3],

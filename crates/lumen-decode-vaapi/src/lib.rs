@@ -1,12 +1,13 @@
 //! VA-API H.264 decoder.
 //!
-//! Decodes frame pictures made of I and P slices (4:2:0, 8-bit, Baseline, Main or High). B
-//! slices, reference marking (MMCO), list reordering, long-term references and interlace are
-//! explicit errors.
+//! Decodes frame pictures made of I and P slices (4:2:0, 8-bit, Baseline, Main or High), with
+//! list reordering, adaptive reference marking (MMCO), long-term references, `frame_num` gaps
+//! and all three order-count types. Pictures come out in decode order. B slices and interlace
+//! are explicit errors.
 #![forbid(unsafe_code)]
 
-mod bitstream;
-mod dpb;
+pub mod bitstream;
+pub mod dpb;
 #[cfg(test)]
 mod fixture;
 mod output;
@@ -397,25 +398,21 @@ mod tests {
     }
 
     #[test]
-    fn frame_num_gap_is_an_error_and_keeps_the_state() {
-        let Some(decoder) = decoder_or_skip("frame_num_gap_is_an_error_and_keeps_the_state") else {
+    fn a_picture_that_references_a_lost_frame_is_an_error() {
+        let Some(decoder) = decoder_or_skip("a_picture_that_references_a_lost_frame_is_an_error")
+        else {
             return;
         };
         let mut decoder = decoder.cpu_output();
         decoder
             .decode(&access_unit(FLAT_IDR_AU))
             .expect("IDR decodes");
-        // frame_num 3 directly after frame_num 0: the reference for frame_num 1 is missing.
+        // frame_num 3 directly after frame_num 0: frames 1 and 2 are inferred, and frame 3
+        // predicts from frame 2, which was lost.
         let error = decoder
             .decode(&access_unit(FLAT_P3_AU))
-            .expect_err("gap rejected");
+            .expect_err("the lost reference is refused");
         assert!(error.contains("frame_num gap"), "{error}");
-        // The rejected picture left the reference store alone, so frame_num 1 still decodes.
-        let frame = decoder
-            .decode(&access_unit(FLAT_P1_AU))
-            .expect("frame_num 1 decodes")
-            .expect("picture");
-        assert_flat_64x64(&frame, FLAT_Y, FLAT_UV);
-        assert_eq!((decoder.frames_decoded(), decoder.decode_errors()), (2, 1));
+        assert_eq!((decoder.frames_decoded(), decoder.decode_errors()), (1, 1));
     }
 }

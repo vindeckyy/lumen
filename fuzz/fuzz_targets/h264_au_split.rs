@@ -117,5 +117,5 @@ fuzz_target!(|data: &[u8]| {
     assert!(parity > 0, "a frame with parity carries parity slices");
     let got = got.expect("the parity of the block rebuilds the lost slice");
     assert_eq!(got.data.as_slice(), au);
-    assert_eq!(rx.fec_recoveries(), 1, "exactly one slice was rebuilt");
+    assert_eq!(rx.stats().frames_rebuilt, 1, "exactly one frame was rebuilt");
 });

@@ -1,21 +1,14 @@
 //! Forward error correction for media slices.
 //!
 //! Each FEC block carries a number of data slices and a number of parity
-//! slices. The parity is computed over GF(2^8) with the primitive polynomial
-//! `x^8 + x^4 + x^3 + x^2 + 1`:
+//! slices. The parity is Reed-Solomon over GF(2^16) (Leopard-RS, SIMD) from
+//! the `reed-solomon-simd` crate, the code punktfunk uses: with `n` parity
+//! slices any `n` losses inside a block are recoverable, at O(n log n) cost.
 //!
-//! - `parity[0]` = sum of all data slices
-//! - `parity[1]` = sum of `(index + 1) * slice` over all data slices
-//! - `parity[2]` = sum of `(index + 1)^2 * slice` over all data slices
-//!
-//! With two parity slices any two distinct losses inside a block are
-//! recoverable. With three, any three distinct losses are: the three
-//! equations are a Vandermonde system in `(i+1, j+1, k+1)`, whose
-//! determinant is non-zero exactly when the three values differ.
-//!
-//! XOR-only parity cannot do this: two slices with the same index parity are
-//! indistinguishable under an XOR code, and returning wrong bytes is worse
-//! than reporting a loss.
+//! The code is a function of the block's data-slice count and parity count,
+//! so the sender pads a short last block to the full block size with zero
+//! slices, exactly as the receiver does, and both sides take the parity count
+//! from the block size ([`parity_for_block`]).
 
 use std::collections::BTreeMap;
 
@@ -25,84 +18,25 @@ pub const BLOCK_DATA_SLICES: usize = 8;
 /// Number of parity slices per FEC block at the default parity level.
 pub const BLOCK_PARITY_SLICES: usize = 2;
 
-/// GF(2^8) multiplication tables for the polynomial 0x11D.
-struct Gf256 {
-    log: [u8; 256],
-    exp: [u8; 512],
-}
-
-impl Gf256 {
-    const fn new() -> Self {
-        let mut log = [0u8; 256];
-        let mut exp = [0u8; 512];
-        let mut x: u16 = 1;
-        let mut i = 0usize;
-        while i < 255 {
-            exp[i] = x as u8;
-            exp[i + 255] = x as u8;
-            log[x as usize] = i as u8;
-            // x = x * 2 in GF(2^8) with the reduction polynomial 0x11D.
-            x <<= 1;
-            if x & 0x100 != 0 {
-                x ^= 0x11D;
-            }
-            i += 1;
-        }
-        Self { log, exp }
+/// The number of parity slices the sender computes for a block of
+/// `block_data` data slices. The heavy level is the only one with twelve.
+#[must_use]
+pub const fn parity_for_block(block_data: usize) -> usize {
+    if block_data == ParityLevel::Heavy.block_data_slices() {
+        ParityLevel::Heavy.parity_slices()
+    } else {
+        BLOCK_PARITY_SLICES
     }
-
-    fn mul(&self, a: u8, b: u8) -> u8 {
-        if a == 0 || b == 0 {
-            return 0;
-        }
-        self.exp[self.log[a as usize] as usize + self.log[b as usize] as usize]
-    }
-
-    fn inv(&self, a: u8) -> u8 {
-        debug_assert_ne!(a, 0);
-        self.exp[255 - self.log[a as usize] as usize]
-    }
-}
-
-static GF: Gf256 = Gf256::new();
-
-/// Multiply every byte of `slice` by the scalar `k` and XOR into `dst`.
-fn accumulate_scaled(dst: &mut Vec<u8>, slice: &[u8], k: u8) {
-    if dst.len() < slice.len() {
-        dst.resize(slice.len(), 0);
-    }
-    if k == 0 {
-        return;
-    }
-    if k == 1 {
-        for (d, s) in dst.iter_mut().zip(slice.iter()) {
-            *d ^= s;
-        }
-        return;
-    }
-    for (d, s) in dst.iter_mut().zip(slice.iter()) {
-        *d ^= GF.mul(k, *s);
-    }
-}
-
-/// Parity coefficient of data slice `index`: `index + 1` modulo 256.
-const fn coefficient(index: usize) -> u8 {
-    (index as u8).wrapping_add(1)
-}
-
-/// Parity coefficient of data slice `index` for the third parity: the square
-/// of the first coefficient.
-fn coefficient_squared(index: usize) -> u8 {
-    let k = coefficient(index);
-    GF.mul(k, k)
 }
 
 /// A FEC block: data slices plus the parity computed over them.
 #[derive(Debug, Clone)]
 pub struct FecBlock {
-    /// The data slices in the block.
+    /// The data slices in the block. A missing slice may hold anything of the
+    /// block's slice length; it is never read.
     pub data: Vec<Vec<u8>>,
-    /// The parity slices computed over `data`.
+    /// The parity slices, by parity index. An empty entry is a parity slice
+    /// that did not arrive.
     pub parity: Vec<Vec<u8>>,
 }
 
@@ -116,211 +50,83 @@ impl FecBlock {
 
     /// Try to recover a missing data slice from the parity slices.
     ///
-    /// `missing` lists the indices that are absent, in ascending order.
-    /// Returns `Some(recovered_bytes)` when the slice could be rebuilt.
+    /// `missing` lists the indices that are absent. Returns
+    /// `Some(recovered_bytes)` when the slice could be rebuilt.
     #[must_use]
     pub fn recover(&self, index: usize, missing: &[usize]) -> Option<Vec<u8>> {
-        if index >= self.data.len()
-            || !missing.contains(&index)
+        if !missing.contains(&index) {
+            return None;
+        }
+        self.recover_missing(missing)?
+            .into_iter()
+            .find_map(|(i, bytes)| (i == index).then_some(bytes))
+    }
+
+    /// Rebuild every slice in `missing` with one decode, which is what a
+    /// receiver wants: the decode, not the copy, is the cost. Returns the
+    /// rebuilt slices by index, or `None` when the block cannot be rebuilt.
+    #[must_use]
+    pub fn recover_missing(&self, missing: &[usize]) -> Option<Vec<(usize, Vec<u8>)>> {
+        if missing.is_empty()
             || missing.iter().any(|&m| m >= self.data.len())
+            // A repeated index is a malformed list, not a second loss.
+            || missing.iter().enumerate().any(|(i, m)| missing[..i].contains(m))
         {
             return None;
         }
         // Every slice of a block must have the same length, or the length of
-        // the lost slice is not recoverable from the parity: the parity
-        // carries the longest slice's length. The wire format guarantees this
-        // (every slice is padded to the slice size), but a block that does
-        // not keep it is refused rather than rebuilt to the wrong length.
-        if !self.uniform_length() {
+        // the lost slice is not known. The wire format guarantees this (every
+        // slice is padded to the slice size); a block that does not keep it is
+        // refused rather than rebuilt to the wrong length.
+        let len = self.data.first()?.len();
+        if self.data.iter().any(|d| d.len() != len) {
             return None;
         }
-        match missing.len() {
-            1 => self.recover_single(index),
-            2 => {
-                let a = missing[0];
-                let b = missing[1];
-                if a == b {
-                    return None;
-                }
-                self.recover_pair(a, b, index)
-            }
-            3 => {
-                let a = missing[0];
-                let b = missing[1];
-                let c = missing[2];
-                if a == b || b == c || a == c {
-                    return None;
-                }
-                self.recover_triple(a, b, c, index)
-            }
-            _ => None,
-        }
-    }
-
-    /// Whether every data slice has the same length.
-    fn uniform_length(&self) -> bool {
-        let mut lengths = self.data.iter().map(Vec::len);
-        let Some(first) = lengths.next() else {
-            return true;
-        };
-        lengths.all(|l| l == first)
-    }
-
-    /// Recover one missing slice: `slice = parity0 - sum(intact)`.
-    fn recover_single(&self, index: usize) -> Option<Vec<u8>> {
-        let p0 = self.parity.first()?;
-        let mut out = p0.clone();
-        for (i, slice) in self.data.iter().enumerate() {
-            if i == index {
-                continue;
-            }
-            accumulate_scaled(&mut out, slice, 1);
-        }
-        Some(out)
-    }
-
-    /// Recover two missing slices from the two parity equations.
-    fn recover_pair(&self, a: usize, b: usize, index: usize) -> Option<Vec<u8>> {
-        let p0 = self.parity.first()?;
-        let p1 = self.parity.get(1)?;
-
-        // S = a + b
-        let mut s = p0.clone();
-        // W = (a+1)*a_slice + (b+1)*b_slice
-        let mut w = p1.clone();
-        for (i, slice) in self.data.iter().enumerate() {
-            if i == a || i == b {
-                continue;
-            }
-            accumulate_scaled(&mut s, slice, 1);
-            accumulate_scaled(&mut w, slice, coefficient(i));
-        }
-
-        let ka = coefficient(a);
-        let kb = coefficient(b);
-        // determinant = ka - kb; zero only when the two indices share a coefficient mod 256
-        let det = ka ^ kb;
-        if det == 0 {
+        let shard = even(len);
+        let recovery: Vec<(usize, &Vec<u8>)> = self
+            .parity
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.len() == shard)
+            .collect();
+        if recovery.len() < missing.len() {
             return None;
         }
-        // a_slice = (W - kb*S) / (ka - kb)
-        let mut num = w.clone();
-        accumulate_scaled(&mut num, &s, kb);
-        let inv_det = GF.inv(det);
-        let mut a_slice = num.clone();
-        for byte in &mut a_slice {
-            *byte = GF.mul(inv_det, *byte);
-        }
-        // b_slice = S - a_slice
-        let mut b_slice = s.clone();
-        for (d, x) in b_slice.iter_mut().zip(a_slice.iter()) {
-            *d ^= *x;
-        }
-
-        if a == index {
-            Some(a_slice)
-        } else if b == index {
-            Some(b_slice)
-        } else {
-            None
-        }
-    }
-
-    /// Recover three missing slices from the three parity equations.
-    ///
-    /// The three equations are a Vandermonde system in
-    /// `(i+1, j+1, k+1)`. It is solved by Gaussian elimination over GF(256).
-    #[allow(clippy::many_single_char_names)]
-    fn recover_triple(&self, a: usize, b: usize, c: usize, index: usize) -> Option<Vec<u8>> {
-        let p0 = self.parity.first()?;
-        let p1 = self.parity.get(1)?;
-        let p2 = self.parity.get(2)?;
-
-        // The right-hand sides with the intact slices removed.
-        let mut s = p0.clone();
-        let mut w = p1.clone();
-        let mut z = p2.clone();
-        for (i, slice) in self.data.iter().enumerate() {
-            if i == a || i == b || i == c {
-                continue;
-            }
-            accumulate_scaled(&mut s, slice, 1);
-            accumulate_scaled(&mut w, slice, coefficient(i));
-            accumulate_scaled(&mut z, slice, coefficient_squared(i));
-        }
-
-        let rows = [
-            [1u8, 1, 1],
-            [coefficient(a), coefficient(b), coefficient(c)],
-            [
-                coefficient_squared(a),
-                coefficient_squared(b),
-                coefficient_squared(c),
-            ],
-        ];
-        let rhs = [s, w, z];
-        let solution = solve_vandermonde(rows, rhs)?;
-
-        if a == index {
-            Some(solution[0].clone())
-        } else if b == index {
-            Some(solution[1].clone())
-        } else if c == index {
-            Some(solution[2].clone())
-        } else {
-            None
-        }
+        let original = self
+            .data
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !missing.contains(i))
+            .map(|(i, d)| (i, padded(d, shard)));
+        let restored =
+            reed_solomon_simd::decode(self.data.len(), self.parity.len(), original, recovery)
+                .ok()?;
+        Some(
+            restored
+                .into_iter()
+                .map(|(i, mut bytes)| {
+                    bytes.truncate(len);
+                    (i, bytes)
+                })
+                .collect(),
+        )
     }
 }
 
-/// Solve a 3x3 system over GF(256) by Gaussian elimination.
-///
-/// `rows` is the coefficient matrix and `rhs` the three right-hand sides,
-/// each one byte per position. Returns `None` when the matrix is singular.
-fn solve_vandermonde(rows: [[u8; 3]; 3], rhs: [Vec<u8>; 3]) -> Option<[Vec<u8>; 3]> {
-    let mut matrix = rows;
-    let mut values = rhs;
+/// `len` rounded up to the even shard size the Reed-Solomon engine needs.
+const fn even(len: usize) -> usize {
+    len + len % 2
+}
 
-    // Forward elimination.
-    for col in 0..3 {
-        // Find a pivot in this column.
-        let pivot = (col..3).find(|&r| matrix[r][col] != 0)?;
-        matrix.swap(col, pivot);
-        values.swap(col, pivot);
-
-        let inv = GF.inv(matrix[col][col]);
-        for entry in &mut matrix[col][col..] {
-            *entry = GF.mul(inv, *entry);
-        }
-        for byte in &mut values[col] {
-            *byte = GF.mul(inv, *byte);
-        }
-
-        for row in 0..3 {
-            if row == col {
-                continue;
-            }
-            let factor = matrix[row][col];
-            if factor == 0 {
-                continue;
-            }
-            // The pivot row is copied out, because the two rows borrow the
-            // matrix at the same time.
-            let pivot: Vec<u8> = matrix[col][col..].to_vec();
-            for (offset, source) in pivot.iter().enumerate() {
-                matrix[row][col + offset] ^= GF.mul(factor, *source);
-            }
-            let mut scaled = values[col].clone();
-            for x in &mut scaled {
-                *x = GF.mul(factor, *x);
-            }
-            for (d, x) in values[row].iter_mut().zip(scaled.iter()) {
-                *d ^= *x;
-            }
-        }
+/// `slice` zero-padded to `shard` bytes; borrowed when it already is.
+fn padded(slice: &[u8], shard: usize) -> std::borrow::Cow<'_, [u8]> {
+    if slice.len() == shard {
+        std::borrow::Cow::Borrowed(slice)
+    } else {
+        let mut owned = slice.to_vec();
+        owned.resize(shard, 0);
+        std::borrow::Cow::Owned(owned)
     }
-
-    Some(values)
 }
 
 /// Compute the parity slices for a set of data slices.
@@ -333,31 +139,19 @@ pub fn compute_parity(data: &[Vec<u8>]) -> Vec<Vec<u8>> {
 }
 
 /// Compute `count` parity slices for a set of data slices.
+///
+/// Every parity slice is as long as the longest data slice, rounded up to an
+/// even length; shorter data slices count as zero-padded.
 #[must_use]
 pub fn compute_parity_with(data: &[Vec<u8>], count: usize) -> Vec<Vec<u8>> {
-    if data.is_empty() || count == 0 {
+    let len = data.iter().map(Vec::len).max().unwrap_or(0);
+    if data.is_empty() || count == 0 || len == 0 {
         return Vec::new();
     }
-    let len = data.iter().map(Vec::len).max().unwrap_or(0);
-    let mut p0 = vec![0u8; len];
-    for slice in data {
-        accumulate_scaled(&mut p0, slice, 1);
-    }
-    if count == 1 {
-        return vec![p0];
-    }
-    let mut p1 = vec![0u8; len];
-    for (i, slice) in data.iter().enumerate() {
-        accumulate_scaled(&mut p1, slice, coefficient(i));
-    }
-    if count == 2 {
-        return vec![p0, p1];
-    }
-    let mut p2 = vec![0u8; len];
-    for (i, slice) in data.iter().enumerate() {
-        accumulate_scaled(&mut p2, slice, coefficient_squared(i));
-    }
-    vec![p0, p1, p2]
+    let shard = even(len);
+    // The engine accepts every count up to 65535 in total, far above any block here.
+    reed_solomon_simd::encode(data.len(), count, data.iter().map(|d| padded(d, shard)))
+        .unwrap_or_default()
 }
 
 /// How much parity to send for a measured loss rate.
@@ -562,20 +356,26 @@ mod tests {
     }
 
     #[test]
-    fn parity_matches_data_length() {
-        let data: Vec<Vec<u8>> = (0..4u8).map(|i| vec![i; 9]).collect();
-        let p = compute_parity(&data);
-        assert_eq!(p.len(), 2);
-        for parity in &p {
-            assert_eq!(parity.len(), 9);
-        }
+    fn an_odd_slice_length_round_trips() {
+        let data: Vec<Vec<u8>> = (0..4u8).map(|i| vec![i + 1; 9]).collect();
+        let b = FecBlock::new(data);
+        assert!(b.parity.iter().all(|p| p.len() == 10));
+        assert_eq!(b.recover(2, &[0, 2]).unwrap(), vec![3u8; 9]);
     }
 
     #[test]
-    fn gf256_is_a_field() {
-        for a in 1..=255u8 {
-            assert_eq!(GF.mul(a, GF.inv(a)), 1, "a={a}");
-        }
+    fn a_lost_parity_slice_is_skipped_by_index() {
+        let data: Vec<Vec<u8>> = (0..12u8).map(|i| vec![i.wrapping_mul(37); 32]).collect();
+        let mut b = FecBlock {
+            parity: compute_parity_with(&data, 3),
+            data: data.clone(),
+        };
+        // Parity 0 is lost; parity 1 and 2 still rebuild two data losses.
+        b.parity[0].clear();
+        assert_eq!(b.recover(4, &[4, 9]).unwrap(), data[4]);
+        assert_eq!(b.recover(9, &[4, 9]).unwrap(), data[9]);
+        // Three losses need three parity slices.
+        assert!(b.recover(1, &[1, 4, 9]).is_none());
     }
 
     #[test]

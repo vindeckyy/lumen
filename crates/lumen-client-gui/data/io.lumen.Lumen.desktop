@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Lumen
+GenericName=Remote Desktop
+Comment=Use another computer's screen, sound and input from this one
+Exec=lumen
+Icon=io.lumen.Lumen
+Terminal=false
+Categories=Network;RemoteAccess;GTK;
+Keywords=remote;desktop;stream;vnc;rdp;moonlight;
+StartupNotify=true
+StartupWMClass=io.lumen.Lumen
+SingleMainWindow=true

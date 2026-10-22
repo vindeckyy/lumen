@@ -60,7 +60,7 @@ here.
  │            │                       │        │  reassemble → decode     │
  └────────────┼───────────────────────┘        └─────────┼─────────────────┘
               │                                         │
-              │  media: UDP datagrams, adaptive GF(256) │
+              │  media: UDP datagrams, adaptive RS FEC   │
               │  parity, token-bucket pacing,           │
               │  deadline-aware selective retransmission│
               │                                         │
@@ -90,9 +90,9 @@ here.
   it. The heavy level uses twelve data slices so that three parity slices stay
   inside the 25 % overhead cap. The block size travels in the media header's
   `flags` word, so the receiver maps a slice to its block without being told
-  the level. The parity is GF(256) and the three parity equations are a
-  Vandermonde system over GF(256), solved by Gaussian elimination, so **three
-  losses inside one block are recoverable**. A token-bucket pacer paces
+  the level. The parity is Reed-Solomon over GF(2^16)
+  (Leopard-RS, from `reed-solomon-simd`, as in punktfunk), so **as many losses
+  inside one block as it has parity slices are recoverable**. A token-bucket pacer paces
   datagrams, and a deadline-aware retransmission queue does selective
   recovery. A retransmission is bounded by the frame's deadline: the capture
   timestamp plus 1.5 frame intervals. The client generates the NACKs that drive
@@ -127,10 +127,13 @@ here.
   a lost video slice. The input wire format carries a monotonic sequence
   number and a 64-entry replay window, because AEAD alone would still let a
   captured keystroke be replayed. On the host the events are injected through
-  uinput, XTest or an EI sender. The X11 capture crate reads the raw XI2
-  events of the X server and maps the keymap through xkbcommon; it is no
-  longer a stub. The input channel and the injection leg are measured, but the
-  path is not yet driven by the live host and client pipelines.
+  XTEST, the wlroots virtual input protocols, uinput or an EI sender. The X11
+  capture crate reads the raw XI2 events of the X server and maps the keymap
+  through xkbcommon. Gamepads ride the same socket: the client reads every
+  evdev gamepad of its machine and sends its whole state on each change and
+  every 100 ms, and the host gives each one a virtual DualSense through
+  `/dev/uhid`. What the game asks of those pads' motors comes back over the
+  control channel, and the client plays it on the pad of its own machine.
 - **Audio.** The host creates a PipeWire virtual sink for the session,
   captures it, encodes it as Opus and sends it on a UDP port of its own
   (24802 by default), sealed with a key pair of its own, so the audio can
@@ -155,9 +158,12 @@ here.
 - **Pairing.** The host owns a long-term Ed25519 identity and keeps a store of
   the client keys it trusts. A client proves it owns its identity key by
   signing a nonce the host supplies during the handshake. A client the host
-  does not trust yet is refused unless it answers the six-digit pairing code
-  the host shows for that attempt; with `--pairing refuse` the host turns
-  every unknown client away. The host takes `--pairing-store <path>` and
+  does not trust yet is refused unless it proves, through SPAKE2, that it
+  knows the six-digit code the host shows for that attempt; the code never
+  crosses the wire, and the exchange is bound to the connection's Noise keys,
+  so a relay in the middle cannot pair. The host signs every session and the
+  client pins the host's key. With `--pairing refuse` the host turns every
+  unknown client away. The host takes `--pairing-store <path>` and
   `--pairing prompt|refuse`; the client takes `--identity <path>`,
   `--pairing-code <code>` and `--pairing-code-file <path>`. The pairing store
   is written with owner-only permissions.
@@ -180,6 +186,43 @@ here.
   `MODE=loopback` puts both ends on 127.0.0.1; `MODE=netns` puts the host in
   the `lumen-host` namespace and the client in `lumen-client`, over the veth
   pair from `scripts/netns-up.sh`.
+
+### Finding the host
+
+The host advertises itself over mDNS, so a client finds it without being told
+an address:
+
+```
+lumen-host --advertise 192.168.0.72:24800
+lumen-client --discover
+```
+
+The advertisement carries the host's identity fingerprint, so two hosts on the
+same network are told apart before a client pairs with either. A client that
+knows the host can also wake it: `--wake <mac>` sends a wake-on-lan packet
+before it connects.
+
+### The desktop app
+
+`lumen` is the client for people rather than scripts: a GTK 4 and libadwaita
+window that lists the saved hosts and the ones answering on mDNS, adds and
+edits hosts (with a MAC address for wake-on-lan), pairs through a dialog that
+shows the host's fingerprint and asks for its six-digit code, and starts a
+`lumen-client` for the session. It follows the desktop's light or dark style.
+Failures are explained in plain words, with the client's own output under
+Details. Closing the stream window ends the session; F11 toggles fullscreen.
+
+```
+cargo build --release -p lumen-client-gui -p lumen-client-desktop
+target/release/lumen
+```
+
+The app looks for `lumen-client` next to itself, then on `PATH`;
+`LUMEN_CLIENT` overrides both. Hosts and settings live in
+`$XDG_CONFIG_HOME/lumen/client.json`, and each host's client identity and pin
+in `$XDG_STATE_HOME/lumen/hosts/<id>/`. The desktop entry and icon are in
+`crates/lumen-client-gui/data/`; copy them under `~/.local/share/` to put the
+app in the menu.
 
 ### The control plane
 
@@ -254,26 +297,26 @@ state of each crate at the time of writing.
 | Crate | Responsibility | Status |
 |---|---|---|
 | `lumen-ffi-va` | libva bindings and safe wrapper: display/context/surface, DMA-BUF import and export | implemented |
-| `lumen-ffi-libei` | libei bindings: EIS receiver, EI sender | implemented, not exercised live |
-| `lumen-ffi-nvenc` | NVENC bindings (libnvidia-encode.so.1, CUDA external memory) | stub |
+| `lumen-ffi-nvenc` | NVENC API 12.1 bindings, loaded at runtime (libcuda.so.1, libnvidia-encode.so.1) | working |
 | `lumen-protocol` | Wire format: 42-byte media header, message kinds, capability bitmap, slice descriptors, input codec, the 48-byte audio header, the scaled colour conversion | implemented |
-| `lumen-transport` | UDP datagrams, token-bucket pacing, GF(256) FEC with adaptive parity, deadline-aware retransmission, RTT/loss estimation, the link feedback, fault injection, the input channel | implemented |
-| `lumen-crypto` | Noise XX handshake, HKDF key separation, Ed25519 device identity, pairing code derivation, AEAD | implemented |
-| `lumen-capture-pipewire` | xdg-desktop-portal ScreenCast → PipeWire capture | stub |
+| `lumen-transport` | UDP datagrams, token-bucket pacing, Reed-Solomon FEC with adaptive parity, deadline-aware retransmission, RTT/loss estimation, the link feedback, fault injection, the input channel | implemented |
+| `lumen-crypto` | Noise XX handshake, HKDF key separation, Ed25519 device identity, SPAKE2 pairing bound to the connection, AEAD | implemented |
+| `lumen-capture-pipewire` | xdg-desktop-portal ScreenCast → PipeWire capture, host flag `--capture portal` | working (shared memory) |
 | `lumen-capture-wlr` | wlroots `zwlr_screencopy_manager_v1` DMA-BUF capture | implemented |
 | `lumen-capture-x11` | X11 host capture: DRI3 → XShm → XDamage, XFixes cursor | implemented |
 | `lumen-encode-vaapi` | VA-API H.264 encode (NV12, low-latency, infinite GOP, on-demand IDR, CQP/CBR) | implemented (H.264 only) |
-| `lumen-encode-nvenc` | NVENC encode | stub |
+| `lumen-encode-nvenc` | NVENC H.264 encode, host flag `--encoder nvenc` | working |
 | `lumen-encode-vulkan` | Vulkan Video encode | stub |
 | `lumen-decode-vaapi` | VA-API H.264 decode, DPB handling, CPU NV12 output with opt-in DMA-BUF | implemented (H.264 only) |
 | `lumen-decode-vulkan` | Vulkan Video decode | stub |
 | `lumen-render` | Client present path: Wayland xdg-shell, `wl_shm`, `linux-dmabuf` + EGL, presentation feedback, X11 present | partial |
 | `lumen-input-wayland` | Client-side Wayland input capture, EIS source, sealed UDP sender | partial |
 | `lumen-input-x11` | Client-side X11 input capture: XI2 raw motion, key press and key release, keymap through xkbcommon | implemented |
-| `lumen-input-inject` | Host-side injection: uinput, XTest, EI sender, replay window | partial |
+| `lumen-input-inject` | Host-side injection: uinput, wlroots virtual input, XTest, EI sender, replay window | partial |
 | `lumen-audio` | PipeWire virtual sink and capture, Opus encode/decode, A/V sync, playback | implemented (wired into the host and the client sessions) |
 | `lumen-host-service` | Host daemon: Noise session establishment, pairing, control channel, media sender and receiver, media pipeline, session persistence, multiple clients, clipboard, monitors, resolution change, backend selection, the control plane | implemented (pipeline, session and adaptive transport) |
 | `lumen-client-desktop` | Client application: connect, pair, receive, decode, present, reconnect with backoff, low-power profile, event log, clipboard, monitors, the quality ladder | implemented (pipeline, session handling) |
+| `lumen-client-gui` | The `lumen` desktop app (GTK 4, libadwaita): saved and discovered hosts, add and edit, pairing dialog, wake-on-lan, preferences, starts `lumen-client` per session | implemented |
 | `lumen-bench` | Measurement harness: test pattern, per-stage records, report writer, camera analysis | partial, `lumen-bench` binary |
 | `lumen-web` | The control plane: a dependency-free HTTP/1.1 server, the JSON API and the dashboard it serves | implemented |
 
@@ -365,7 +408,7 @@ Notes:
 ## Hardware requirements
 
 - **VA-API H.264 encode and decode.** The host needs a hardware H.264 encoder
-  (Intel iGPU, AMD `amdgpu`, or NVIDIA via NVENC, which is not implemented yet)
+  (Intel iGPU, AMD `amdgpu`, or NVIDIA via NVENC with `--encoder nvenc`)
   and the client needs an H.264 decoder. On NVIDIA, VA-API is decode-only
   (`nvidia-vaapi-driver`), so encoding there requires NVENC.
 - **A DRM render node.** `/dev/dri/renderD*` must exist and be readable and
@@ -374,6 +417,14 @@ Notes:
 - **A Wayland or X11 session** on both ends. Wayland is the primary target;
   X11 is supported for capture and presentation.
 - **Linux.** The capture, render, input and DRM paths are Linux-specific.
+- **Input injection on the host** needs write access to `/dev/uinput` (and
+  `/dev/uhid` for gamepads). Many distributions grant the active seat user an
+  ACL on `/dev/uinput` but leave `/dev/uhid` to root; a headless or service
+  host, or one with gamepads, needs
+  [`packaging/udev/60-lumen-input.rules`](packaging/udev/60-lumen-input.rules)
+  and membership of the `input` group. Without access the host logs
+  `lumen-host: input injection unavailable` (or `gamepad input failed`) and
+  streams without that input.
 - No photodiode or camera hardware is required to build or test, but it is
   required to measure glass-to-glass latency. The procedure for that
   measurement is written down in [`harness/README.md`](harness/README.md); the
@@ -506,14 +557,19 @@ These are real gaps, not future work that is merely unstarted:
 
 - **HEVC and AV1.** The capability bitmap carries `HEVC` and `AV1` bits, but no
   codec implements them. Only H.264 is encoded and decoded.
-- **NVENC.** `lumen-encode-nvenc` and `lumen-ffi-nvenc` are stubs. The
-  hardware is present on the reference machine; the code is not written.
+- **NVENC input is a CPU copy.** The NVENC encoder copies each frame into its
+  input buffer from the CPU; a tiled DMA-BUF is refused. CUDA import of the
+  capture's DMA-BUF is not implemented.
 - **Vulkan Video encode and decode.** `lumen-encode-vulkan` and
   `lumen-decode-vulkan` are stubs. lavapipe is available for a future software
   correctness path.
-- **PipeWire capture.** `lumen-capture-pipewire` is a stub: no portal
-  ScreenCast, no PipeWire stream, no `spa_meta_header` timestamps, no restore
-  token. The audio path uses PipeWire, but the *screen* still does not.
+- **PipeWire capture is shared memory only.** `--capture portal` asks the
+  ScreenCast portal once, keeps the restore token next to the pairing store,
+  and streams BGRx/RGBA shared-memory frames, which the host converts to NV12.
+  No DMA-BUF is negotiated, so there is no explicit sync, and frames are
+  stamped on arrival rather than from `spa_meta_header`. A damage-driven
+  producer such as xdg-desktop-portal-wlr sends no frames while the screen
+  does not change.
 - **The zero-copy present path.** The decoder's default output is CPU NV12
   and the renderer cannot import NV12 or a tiled DMA-BUF, so the colour
   conversion runs on the CPU at both ends. This is the largest latency win
@@ -599,6 +655,8 @@ is the record.
 - `docs/design.md` — architecture, stage budgets and numbered decisions.
 - `docs/protocol.md` — the wire protocol.
 - `docs/benchmarks.md` — per-stage percentiles and raw artifacts.
+- `docs/settings.md` — what may become a setting, and what may not.
+- `docs/known-limits.md` — what is not finished, with the next action for each item.
 - `docs/known-limits.md` — hardware-gated items and explicit non-goals.
 - `harness/README.md` — the photodiode and camera rig procedure, the wiring
   and the self-test.

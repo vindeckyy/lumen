@@ -8,10 +8,14 @@ use std::io::ErrorKind;
 
 use wayland_client::backend::WaylandError;
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
+use wayland_client::protocol::wl_buffer::WlBuffer;
+use wayland_client::protocol::wl_compositor::WlCompositor;
 use wayland_client::protocol::wl_keyboard::{self, WlKeyboard};
 use wayland_client::protocol::wl_pointer::{self, WlPointer};
 use wayland_client::protocol::wl_registry;
 use wayland_client::protocol::wl_seat::{self, WlSeat};
+use wayland_client::protocol::wl_shm::{self, WlShm};
+use wayland_client::protocol::wl_shm_pool::WlShmPool;
 use wayland_client::protocol::wl_surface::WlSurface;
 use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, WEnum, delegate_noop};
 use wayland_protocols::wp::pointer_constraints::zv1::client::zwp_locked_pointer_v1::{
@@ -50,6 +54,33 @@ struct State {
     // Keeps the seat and keyboard proxies alive for as long as the source exists.
     seat: Option<WlSeat>,
     keyboard: Option<WlKeyboard>,
+    /// Keys the host was told are down, released when the keyboard focus leaves.
+    held: Vec<u32>,
+    compositor: Option<WlCompositor>,
+    shm: Option<WlShm>,
+    /// The cursor the pointer shows over our surfaces.
+    cursor: Option<Cursor>,
+    /// The serial of the last pointer enter, which `set_cursor` must name.
+    enter_serial: Option<u32>,
+}
+
+/// A cursor surface with its buffer and hotspot; no image hides the cursor.
+struct Cursor {
+    image: Option<(WlSurface, WlBuffer)>,
+    hot_x: i32,
+    hot_y: i32,
+}
+
+impl State {
+    /// Sets the stored cursor on the pointer, when the pointer is over one of our surfaces.
+    fn show_cursor(&self) {
+        if let (Some(pointer), Some(serial), Some(cursor)) =
+            (&self.pointer, self.enter_serial, &self.cursor)
+        {
+            let surface = cursor.image.as_ref().map(|(s, _)| s);
+            pointer.set_cursor(serial, surface, cursor.hot_x, cursor.hot_y);
+        }
+    }
 }
 
 impl WaylandSource {
@@ -68,6 +99,8 @@ impl WaylandSource {
             .map_err(|e| format!("no wl_seat global: {e}"))?;
         state.seat = Some(seat);
         state.relative_manager = globals.bind(&qh, 1..=1, ()).ok();
+        state.compositor = globals.bind(&qh, 1..=4, ()).ok();
+        state.shm = globals.bind(&qh, 1..=1, ()).ok();
         state.constraints = globals.bind(&qh, 1..=1, ()).ok();
         // The roundtrip delivers the seat capabilities, which create the pointer and keyboard.
         queue
@@ -79,6 +112,71 @@ impl WaylandSource {
             state,
             closed: false,
         })
+    }
+
+    /// Shows `argb` (premultiplied, `width` x `height`, one little-endian `u32` per pixel) as the
+    /// cursor over our surfaces, with its hotspot at `hot_x`, `hot_y`. A zero width hides it.
+    ///
+    /// # Errors
+    /// Returns why the compositor offers no shared memory or the buffer could not be made.
+    pub fn set_cursor(
+        &mut self,
+        hot_x: u16,
+        hot_y: u16,
+        width: u16,
+        height: u16,
+        argb: &[u8],
+    ) -> Result<(), String> {
+        let qh = self.queue.handle();
+        let surface = if width == 0 {
+            None
+        } else {
+            let (Some(compositor), Some(shm)) = (&self.state.compositor, &self.state.shm) else {
+                return Err("the compositor offers no wl_shm for a cursor".to_owned());
+            };
+            let stride = i32::from(width) * 4;
+            let len = argb.len();
+            if len != usize::from(width) * usize::from(height) * 4 {
+                return Err("the cursor pixels do not match its size".to_owned());
+            }
+            let fd = rustix::fs::memfd_create("lumen-cursor", rustix::fs::MemfdFlags::CLOEXEC)
+                .map_err(|e| format!("memfd_create: {e}"))?;
+            let file = std::fs::File::from(fd);
+            std::os::unix::fs::FileExt::write_all_at(&file, argb, 0)
+                .map_err(|e| format!("cursor pixels: {e}"))?;
+            let size = i32::try_from(len).map_err(|_| "the cursor is too large".to_owned())?;
+            let pool: WlShmPool = shm.create_pool(std::os::fd::AsFd::as_fd(&file), size, &qh, ());
+            let buffer: WlBuffer = pool.create_buffer(
+                0,
+                i32::from(width),
+                i32::from(height),
+                stride,
+                wl_shm::Format::Argb8888,
+                &qh,
+                (),
+            );
+            pool.destroy();
+            let surface = compositor.create_surface(&qh, ());
+            surface.attach(Some(&buffer), 0, 0);
+            surface.damage_buffer(0, 0, i32::from(width), i32::from(height));
+            surface.commit();
+            Some((surface, buffer))
+        };
+        if let Some(Cursor {
+            image: Some((old_surface, old_buffer)),
+            ..
+        }) = self.state.cursor.take()
+        {
+            old_surface.destroy();
+            old_buffer.destroy();
+        }
+        self.state.cursor = Some(Cursor {
+            image: surface,
+            hot_x: i32::from(hot_x),
+            hot_y: i32::from(hot_y),
+        });
+        self.state.show_cursor();
+        self.conn.flush().map_err(|e| format!("flush: {e}"))
     }
 
     /// True after the connection failed. No more events follow.
@@ -224,6 +322,11 @@ impl Dispatch<WlPointer, ()> for State {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        if let wl_pointer::Event::Enter { serial, .. } = event {
+            // The cursor is per enter: the compositor resets it whenever the pointer arrives.
+            state.enter_serial = Some(serial);
+            state.show_cursor();
+        }
         let kind = match event {
             // Absolute motion stops while the pointer is locked, so only report it when unlocked.
             wl_pointer::Event::Motion {
@@ -289,6 +392,10 @@ impl Dispatch<WlKeyboard, ()> for State {
                 ..
             } if state.keys.as_ref().is_none_or(|k| k.contains(key)) => {
                 let pressed = matches!(key_state, WEnum::Value(wl_keyboard::KeyState::Pressed));
+                state.held.retain(|k| *k != key);
+                if pressed {
+                    state.held.push(key);
+                }
                 state.pending.push_back(InputEvent {
                     kind: InputEventKind::Key {
                         keycode: key,
@@ -296,6 +403,18 @@ impl Dispatch<WlKeyboard, ()> for State {
                     },
                     received_us: now_us(),
                 });
+            }
+            // Keys still down when the focus leaves would stay down on the host.
+            wl_keyboard::Event::Leave { .. } => {
+                for keycode in state.held.drain(..) {
+                    state.pending.push_back(InputEvent {
+                        kind: InputEventKind::Key {
+                            keycode,
+                            pressed: false,
+                        },
+                        received_us: now_us(),
+                    });
+                }
             }
             _ => {}
         }
@@ -351,6 +470,13 @@ impl Dispatch<ZwpLockedPointerV1, ()> for State {
 }
 
 delegate_noop!(State: ZwpRelativePointerManagerV1);
+delegate_noop!(State: WlCompositor);
+// These send events (formats, buffer release, surface enter and leave) that the cursor does not
+// need; a plain no-op delegate panics on any event.
+delegate_noop!(State: ignore WlShm);
+delegate_noop!(State: WlShmPool);
+delegate_noop!(State: ignore WlBuffer);
+delegate_noop!(State: ignore WlSurface);
 delegate_noop!(State: ZwpPointerConstraintsV1);
 
 #[cfg(test)]

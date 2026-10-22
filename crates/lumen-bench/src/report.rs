@@ -47,6 +47,13 @@ pub struct Counters {
     pub clipboard_roundtrips: u64,
     /// Resolution changes performed.
     pub resize_events: u64,
+    /// The picture the client settled on, as width by height. Reports from
+    /// before the quality ladder reported it do not carry it.
+    #[serde(default)]
+    pub final_picture: String,
+    /// How many times the quality ladder asked for another picture.
+    #[serde(default)]
+    pub quality_steps: u32,
 }
 
 /// A complete run report.

@@ -23,6 +23,7 @@ mod dmabuf;
 mod error;
 mod format;
 mod image;
+pub mod knobs;
 mod library;
 mod surface;
 pub mod sys;

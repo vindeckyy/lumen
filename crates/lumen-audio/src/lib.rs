@@ -35,7 +35,7 @@ use pipewire::core::CoreRc;
 use pipewire::main_loop::MainLoopRc;
 
 pub use capture::VirtualSinkCapture;
-pub use clock::{ClockOffset, estimate_offset};
+pub use clock::{ClockOffset, MinRttFilter, estimate_offset};
 pub use playback::{
     DEFAULT_MAX_LATENESS_US, DropReason, Playback, PlaybackScheduler, PlaybackStats, VideoClock,
 };

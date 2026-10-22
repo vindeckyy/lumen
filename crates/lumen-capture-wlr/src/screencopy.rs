@@ -92,15 +92,77 @@ pub struct Session {
     pub state: State,
 }
 
-/// Connect to `$WAYLAND_DISPLAY`, bind globals and wait for output metadata.
+/// Connect to the compositor, bind globals and wait for output metadata.
+///
+/// `$WAYLAND_DISPLAY` is tried first. A compositor that restarts often comes up on another
+/// socket, so when the named one is gone the sockets in `$XDG_RUNTIME_DIR` are tried as well,
+/// newest first.
 pub fn connect() -> Result<Session, Error> {
-    let conn = Connection::connect_to_env()?;
+    let conn = connect_any()?;
     let (globals, mut queue) = registry_queue_init::<State>(&conn)?;
     let qh = queue.handle();
     let mut state = State::default();
     bind_globals(&globals, &qh, &mut state);
     queue.roundtrip(&mut state)?;
     Ok(Session { conn, queue, state })
+}
+
+/// The connection to the compositor: `$WAYLAND_DISPLAY` first, then every Wayland socket in
+/// `$XDG_RUNTIME_DIR`, newest first.
+///
+/// A compositor that restarts often comes up on a different socket name, so a host that only
+/// knows the old name cannot reconnect (O-29a).
+fn connect_any() -> Result<Connection, Error> {
+    match Connection::connect_to_env() {
+        Ok(conn) => Ok(conn),
+        Err(first) => {
+            let candidates = wayland_sockets();
+            if candidates.is_empty() {
+                return Err(Error::Connect(first));
+            }
+            let runtime = std::env::var_os("XDG_RUNTIME_DIR").unwrap_or_default();
+            for name in candidates {
+                let path = std::path::Path::new(&runtime).join(&name);
+                let Ok(stream) = std::os::unix::net::UnixStream::connect(&path) else {
+                    continue;
+                };
+                if let Ok(conn) = Connection::from_socket(stream) {
+                    return Ok(conn);
+                }
+            }
+            Err(Error::Connect(first))
+        }
+    }
+}
+
+/// The Wayland sockets in `$XDG_RUNTIME_DIR`, newest first.
+fn wayland_sockets() -> Vec<String> {
+    let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(std::path::Path::new(&dir)) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(std::time::SystemTime, String)> = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        // The lock file of a socket is not a socket.
+        if !name.starts_with("wayland-")
+            || std::path::Path::new(name)
+                .extension()
+                .is_some_and(|e| e == "lock")
+        {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        found.push((modified, name.to_owned()));
+    }
+    found.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
+    found.into_iter().map(|(_, name)| name).collect()
 }
 
 fn bind_globals(globals: &GlobalList, qh: &QueueHandle<State>, state: &mut State) {

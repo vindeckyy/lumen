@@ -10,14 +10,13 @@ Reversibility column: "yes" means the choice can be changed by editing one modul
 |---|---|---|
 | `lumen-protocol` | Media header, slicing, capability bitmap, `PixelFormat`, `FrameSource`/`FrameSink`/`VideoEncoder`/`VideoDecoder` traits, raw codec | Implemented, 46 tests |
 | `lumen-crypto` | Noise XX handshake (snow), per-direction AEAD, key derivation, pairing code | Implemented, 20 tests |
-| `lumen-transport` | UDP socket options, FEC (GF(256) block parity), pacing, retransmit queue, slice assembler, loss/jitter injector | Implemented, 48 tests. Wired to both pipelines |
+| `lumen-transport` | UDP socket options, FEC (Reed-Solomon over GF(2^16), `reed-solomon-simd`), pacing, retransmit queue, slice assembler, loss/jitter injector | Implemented, 48 tests. Wired to both pipelines |
 | `lumen-host-service` | Control channel: framing, encryption, message codec, listener. Noise session, four per-direction session keys, control and media helpers, pairing store, four-stage media pipeline | Implemented, 22 tests. Binary `lumen-host` |
 | `lumen-ffi-va` | Only VA-API FFI crate. Runtime-loaded libva, safe wrappers, DMA-BUF export/import | Implemented, tested on AMD iGPU |
 | `lumen-encode-vaapi` | H.264 encoder on `VideoEncoder`. An HEVC entry point exists but HEVC is not implemented | Implemented, 27 unit + 4 hardware tests |
 | `lumen-decode-vaapi` | H.264 decoder on `VideoDecoder`. I and P slices with a decoded picture buffer | Implemented, 41 unit tests and 1 roundtrip test |
-| `lumen-ffi-libei` | Only crate with `unsafe` for libei. Runtime-loaded libei | Implemented, compile-checked, EIS path not exercised |
 | `lumen-input-wayland` | `InputEvent` types, InputCapture/EIS source, seat fallback, keyboard keymap | Implemented, 15 tests. EIS path not exercised live |
-| `lumen-input-inject` | uinput (via evdev), XTest, EI injection, text injection | Implemented, 10 tests |
+| `lumen-input-inject` | uinput (via evdev), wlroots virtual pointer and keyboard, XTest, EI injection, text injection | Implemented, 10 tests |
 | `lumen-capture-wlr` | wlroots screencopy, DMA-BUF and wl_shm, output listing | Implemented, 7 unit tests and 2 wlroots tests, verified on headless sway |
 | `lumen-capture-x11` | MIT-SHM and GetImage ladder, XDamage, XFixes cursor. DRI3 opt-in | Implemented, 1 unit test plus `env_display` and `xvfb` integration tests, verified on Xvfb and Xwayland |
 | `lumen-render` | Client presentation: Wayland (shm and dmabuf) and X11 (SHM, Present) | Implemented, 6 unit tests, 3 Wayland tests, 1 X11 test, verified on Xvfb and headless sway |
@@ -57,7 +56,7 @@ The budgets sum to 7.6 ms before display scan-out. Nothing here has been timed.
 | ID | Decision | Data and reason | Reversible |
 |---|---|---|---|
 | D1 | Input capture uses the InputCapture portal, not RemoteDesktop. The spec's M3.3 wording is wrong. | RemoteDesktop `ConnectToEIS` is the sender side and carries no local input. | yes |
-| D2 | uinput goes through `evdev` 0.13, not `nix`. | `nix` ioctl macros generate `unsafe fn`. Unsafe is confined to `lumen-ffi-libei`. | yes |
+| D2 | uinput goes through `evdev` 0.13, not `nix`. | `nix` ioctl macros generate `unsafe fn`. The EI protocol is spoken by the pure-Rust `reis` crate, so neither input crate needs `unsafe`. | yes |
 | D3 | `UI_SET_PHYS` is not set on uinput devices. | `evdev` 0.13.2 encodes that ioctl with size 1; the kernel returns EINVAL (confirmed with strace). The phys string is cosmetic. | yes |
 | D4 | Opus is built against system libopus. The `opus` crate is vendored in `vendor/opus` with `default-features = false`. | Upstream `opus` 0.4 pulls `opusic-sys` with a bundled libopus compiled by cmake. That is C compiled into the product, which the rules forbid. `ldd` confirms the system `libopus.so.0` is linked. | costly: a vendored copy to maintain |
 | D5 | `AudioConfig.frame_ms` is an integer in tenths of a millisecond (25 = 2.5 ms, 50 = 5 ms, 100 = 10 ms). | The spec's `u32` milliseconds cannot express 2.5 ms. | yes |
@@ -137,6 +136,9 @@ The budgets sum to 7.6 ms before display scan-out. Nothing here has been timed.
 | D79 | The parity level rises at once, as before. It falls after six lossless estimator windows, where it used to be six lossless frames. | Six frames at 30 fps is 200 ms, shorter than a window, so the fall ran faster than the estimator could see a loss. Counting windows makes the fall take the same time at every frame rate. | Yes. |
 | D80 | The `fec_recoveries` counter is renamed `frames_rebuilt`, and it counts the access units the parity rebuilt. The estimator's loss is unchanged: it still comes from the link feedback. No alias is kept. | The counter was read as loss and overstates it (O-26). The name now says what it counts. The bench reader defaults the new fields, so reports written before the rename still parse. | Yes. |
 | D81 | Two placements differ from the plan. The export-to-image conversion is `DmabufExport::into_image` in `lumen-ffi-va`, not `DmabufImage::from_export` in `lumen-protocol`, because the export type lives in `lumen-ffi-va` and `lumen-protocol` does not depend on it. The VPP check is `decoded_dmabuf_converts_to_bgrx_like_the_cpu_path` in `lumen-decode-vaapi`, not `crates/lumen-ffi-va/tests/vpp.rs`, because it needs a decoder. | The plan named these locations before the types were settled. The code does what the plan specifies. The plan's command `cargo test -p lumen-ffi-va --test vpp` names a test target that does not exist. | Yes. |
+| D83 | The decoder's pool slots are leased: an exported picture holds a `KeepAlive` and the decoder skips a slot whose lease is held, so a picture the compositor still reads is not overwritten (O-24). | The pool slot was free as soon as the picture decoded, so the compositor could read a buffer the next picture overwrote. punktfunk keeps the same rule in its Vulkan decoder (`SlotMap`). | Yes. |
+| D82 | FEC parity is Reed-Solomon over GF(2^16) from `reed-solomon-simd` (Leopard-RS), replacing the hand-written GF(256) parity of D24, D35 and D60. The sender pads a short last block to the block size with zero slices, and both sides take the parity count from the block size (`fec::parity_for_block`). A lost parity slice keeps its slot, so the remaining ones keep their index. | The code is MDS for any parity count, SIMD-fast, and drops the hand-written solver; it is what punktfunk uses. The receiver used to collect the parity slices that arrived without their index, which misnumbered them when parity 0 was the one lost. The parity bytes change, so both ends must run this build. Measured in a release build on this machine with 1200-byte slices: encoding 8+2 takes 1.5 µs a block against 6.1 µs before, and 12+3 1.9 µs against 18.7 µs; rebuilding a block takes about 190 µs in one decode against 7 to 22 µs per slice before. Encoding runs on every frame and rebuilding only on a loss, so the trade is kept. | Yes. |
+| D84 | Pairing is SPAKE2 (Ed25519, `spake2` 0.4) over a random six digit code the host draws per connection, with the two Noise static keys as the identities, plus HKDF key confirmations both ways. The client's identity proof and a new host signature in `HelloAck` are bound to the same static keys, and the client takes its first host pin only after the host confirmed the code. Supersedes D53. | The code of D53 was derived from public values and sent in `PairingChallenge`, so any peer could pair by echoing it, and a relay could carry it. Binding to the Noise static keys is the channel binding punktfunk gets from its certificate fingerprints: a party in the middle holds different keys on each leg. `spake2` 0.4 is the stable release punktfunk uses; 0.5 is a pre-release. | Pre-v1 only (wire change). |
 
 Decisions D28 to D48 were made in the session recorded in `docs/handoff.md`. Their reversibility wording differs from D1 to D27: "Pre-v1 only" means reversible before the wire format is frozen, "Yes" means reversible by editing one module or manifest, and "Not reversible as a gap; must be closed" marks a security gap that is recorded rather than defended.
 
@@ -202,7 +204,7 @@ Done and verified:
 
 These are the deviations from `docs/plan.md`. They must also appear in the final report.
 
-- FEC is GF(256), not XOR (D35).
+- FEC is Reed-Solomon over GF(2^16), not XOR (D35, D82).
 - Decoder output is CPU by default (D37, O-7). Plan forbids CPU readback in the hot path.
 - Renderer cannot import NV12 or tiled DMA-BUF (D46).
 - PipeWire capture not implemented. wlr capture used (D48).

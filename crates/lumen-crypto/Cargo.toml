@@ -19,6 +19,7 @@ aes-gcm = { workspace = true }
 aead = { workspace = true }
 chacha20poly1305 = { workspace = true }
 rand = { workspace = true }
+spake2 = { workspace = true }
 thiserror = { workspace = true }
 
 

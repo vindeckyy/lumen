@@ -20,6 +20,10 @@ use lumen_protocol::media::{FrameSink, VideoFrame};
 pub use wayland::WaylandRenderer;
 pub use x11::X11Renderer;
 
+/// The application id of the stream window: the Wayland `app_id` and the X11 `WM_CLASS`. It
+/// matches the desktop entry, so the desktop shows the Lumen icon and name for the window.
+pub const APP_ID: &str = "io.lumen.Lumen";
+
 /// Which display server the renderer presents to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderBackend {
@@ -79,6 +83,31 @@ impl Renderer {
         }
     }
 
+    /// Whether the user asked to close the window, through its close button or the window
+    /// manager. Read after [`Renderer::poll_events`].
+    #[must_use]
+    pub fn close_requested(&self) -> bool {
+        match self {
+            Self::Wayland(r) => r.close_requested(),
+            Self::X11(r) => r.close_requested(),
+        }
+    }
+
+    /// Makes the window fullscreen, or windowed again. The choice outlives a window that is
+    /// recreated for a new picture size.
+    ///
+    /// # Errors
+    /// Returns a description when the X server refused the request.
+    pub fn set_fullscreen(&mut self, fullscreen: bool) -> Result<(), String> {
+        match self {
+            Self::Wayland(r) => {
+                r.set_fullscreen(fullscreen);
+                Ok(())
+            }
+            Self::X11(r) => r.set_fullscreen(fullscreen),
+        }
+    }
+
     /// `(DRM fourcc, modifier)` pairs the presenter imports as DMA-BUFs: what the Wayland
     /// compositor advertised, or linear BGRX on X11 with DRI3 and Present.
     #[must_use]
@@ -96,6 +125,16 @@ impl Renderer {
         match self {
             Self::Wayland(_) => None,
             Self::X11(r) => Some(r.window_id()),
+        }
+    }
+
+    /// The Wayland connection frames are presented on, so an input reader on the same client
+    /// receives the seat events of the viewer's own surfaces. `None` on X11.
+    #[must_use]
+    pub fn wayland_connection(&self) -> Option<wayland_client::Connection> {
+        match self {
+            Self::Wayland(r) => Some(r.connection()),
+            Self::X11(_) => None,
         }
     }
 }

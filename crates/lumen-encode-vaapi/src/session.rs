@@ -15,6 +15,7 @@ use crate::{
     buffer::{self, MiscFrameRate, MiscRateControl, Nv12Planes, Picture, RefPicture, copy_nv12},
     config::{EncoderConfig, H264Profile, RateControl},
     headers, nal,
+    refs::RefWindow,
 };
 
 /// Packed headers this crate supplies: one sequence header (SPS then PPS) and slice headers.
@@ -29,8 +30,8 @@ pub struct H264Encoder {
     config: EncoderConfig,
     profile: H264Profile,
     ctx: VaContext,
-    /// Reconstruction surfaces. One is the current picture, the other the P reference.
-    recon: [OwnedVaSurface; 2],
+    /// Reconstruction surfaces: one per reference, and one for the current picture.
+    recon: Vec<OwnedVaSurface>,
     /// Upload target for CPU frames.
     input: OwnedVaSurface,
     coded: OwnedVaBuffer,
@@ -41,7 +42,7 @@ pub struct H264Encoder {
     /// Held so the config outlives the context created from it.
     _va_config: VaConfig,
     display: VaDisplay,
-    last: Option<RefPicture>,
+    refs: RefWindow,
     idr_count: u16,
     force_idr: bool,
     frames_encoded: u64,
@@ -112,9 +113,13 @@ impl H264Encoder {
             OwnedVaSurface::create(&display, PixelFormat::Nv12, w, h)
                 .map_err(|e| format!("create {what} surface {w}x{h} on {vendor}: {e}"))
         };
-        let recon = [surface("reconstruction")?, surface("reconstruction")?];
+        let ref_frames = buffer::ref_frames(&config) as usize;
+        let recon = (0..=ref_frames)
+            .map(|_| surface("reconstruction"))
+            .collect::<Result<Vec<_>, _>>()?;
         let input = surface("input")?;
-        let ctx = VaContext::create(&va_config, w, h, &[&recon[0], &recon[1]])
+        let targets: Vec<&OwnedVaSurface> = recon.iter().collect();
+        let ctx = VaContext::create(&va_config, w, h, &targets)
             .map_err(|e| format!("vaCreateContext {w}x{h} on {vendor}: {e}"))?;
 
         let seq = ctx
@@ -139,9 +144,8 @@ impl H264Encoder {
                 .map_err(|e| format!("rate control buffer: {e}"))?,
             );
         }
-        if let Ok(level) = std::env::var("LUMEN_ENC_QUALITY") {
+        if let Some(level) = crate::knobs::encode_quality() {
             // EXPERIMENT: temporary, to measure the encode time per quality level.
-            let level: u32 = level.parse().unwrap_or(0);
             misc.push(
                 ctx.create_buffer(
                     sys::VAEncMiscParameterBufferType,
@@ -172,7 +176,7 @@ impl H264Encoder {
             packed,
             _va_config: va_config,
             display,
-            last: None,
+            refs: RefWindow::new(ref_frames),
             idr_count: 0,
             force_idr: true,
             frames_encoded: 0,
@@ -501,7 +505,20 @@ fn check_attributes(
 impl VideoEncoder for H264Encoder {
     fn encode(&mut self, frame: &VideoFrame) -> Result<EncodedFrame, String> {
         self.check_frame(frame)?;
-        let pic = Picture::plan(self.last, self.force_idr, self.idr_count);
+        let slot = self.refs.free_slot(self.recon.len());
+        let mut pic = Picture::plan(self.refs.newest(), slot, self.force_idr, self.idr_count);
+        if pic.idr {
+            self.refs.clear();
+        }
+        let reference = if pic.idr {
+            None
+        } else {
+            self.refs.next_reference(pic.frame_num)
+        };
+        pic.modification = reference.and_then(|r| r.modification);
+        let recovery = reference.is_some_and(|r| r.recovery);
+        let reference = reference.map(|r| r.pic);
+        let references: Vec<RefPicture> = self.refs.pictures().collect();
         let curr = self.recon[pic.slot].id();
         let t_import = std::time::Instant::now();
         let imported = self.prepare_input(frame)?;
@@ -517,7 +534,7 @@ impl VideoEncoder for H264Encoder {
                     self.config.rate_control,
                     &pic,
                     curr,
-                    self.last,
+                    &references,
                     self.coded.id(),
                 ),
             )
@@ -526,7 +543,7 @@ impl VideoEncoder for H264Encoder {
             .ctx
             .create_buffer(
                 sys::VAEncSliceParameterBufferType,
-                &buffer::h264_slice(&self.config, &pic, self.last),
+                &buffer::h264_slice(&self.config, &pic, reference),
             )
             .map_err(|e| format!("slice parameter buffer: {e}"))?;
 
@@ -574,6 +591,11 @@ impl VideoEncoder for H264Encoder {
             .coded_bytes()
             .map_err(|e| format!("map coded buffer: {e}"))?;
         eprintln!("TRACE enc map_us={}", t_map.elapsed().as_micros());
+        let data = if recovery {
+            nal::with_recovery_point(&data)
+        } else {
+            data
+        };
         if !nal::starts_with_start_code(&data) {
             return Err("driver coded buffer is not an Annex-B byte stream".into());
         }
@@ -584,12 +606,15 @@ impl VideoEncoder for H264Encoder {
             ));
         }
 
-        self.last = Some(RefPicture {
-            slot: pic.slot,
-            surface: curr,
-            frame_num: pic.frame_num,
-            poc: pic.poc,
-        });
+        self.refs.push(
+            RefPicture {
+                slot: pic.slot,
+                surface: curr,
+                frame_num: pic.frame_num,
+                poc: pic.poc,
+            },
+            frame.index,
+        );
         if pic.idr {
             self.idr_count = self.idr_count.wrapping_add(1);
         }
@@ -605,6 +630,14 @@ impl VideoEncoder for H264Encoder {
 
     fn request_keyframe(&mut self) {
         self.force_idr = true;
+    }
+
+    fn recover_from(&mut self, index: u64) -> bool {
+        let held = self.refs.recover_from(index);
+        if !held {
+            self.force_idr = true;
+        }
+        held
     }
 
     fn frames_encoded(&self) -> u64 {

@@ -35,7 +35,15 @@ Options:
   --pairing-store <path>  Host identity and trusted clients (default ~/.local/state/lumen/pairing.json)
   --pairing <mode>        prompt or refuse (default prompt)
   --pairing-code-file <path>  Write the pairing code shown to this file
-  --capture <name>      Capture backend: auto, wayland or x11 (default auto)
+  --advertise <addr>        Advertise the host over mDNS on this address, so a
+                            client finds it without being told one
+  --no-advertise            Do not advertise the host over mDNS
+  --virtual-output        Add a headless output of --size at --fps to the running sway,
+                        capture it, and remove it on exit
+  --capture <name>      Capture backend: auto, wayland, x11 or portal (default auto).
+                        portal asks the ScreenCast portal once and keeps the grant's
+                        restore token next to the pairing store
+  --encoder <name>      Hardware encoder: vaapi or nvenc (default vaapi)
   --display <name>      The X display to capture from, e.g. :77
   --persist-timeout <s> Keep the session this long after the client left
   --max-sessions <n>    How many clients may be served at the same time
@@ -51,6 +59,10 @@ struct Args {
     report: Option<std::path::PathBuf>,
     pairing_store: std::path::PathBuf,
     pairing_mode: PairingMode,
+    /// The address the host advertises over mDNS; `None` means no advertisement.
+    advertise: Option<std::net::SocketAddr>,
+    /// Add a headless output of this size to the running sway and capture it.
+    virtual_output: bool,
 }
 
 /// Errors from the command line.
@@ -80,8 +92,12 @@ fn parse(args: &[String]) -> Result<Args, ArgError> {
     let mut list_outputs = false;
     let mut report = None;
     let mut pairing_store = default_state_dir().join("pairing.json");
+    let mut portal = false;
+    let mut virtual_output = false;
     let mut pairing_mode = PairingMode::Prompt;
     let mut pairing_code_file = None;
+    // The address the host advertises over mDNS; none means no advertisement.
+    let mut advertise = Some("0.0.0.0:24800".parse().expect("a valid default address"));
     let mut width = config.width;
     let mut height = config.height;
     let mut qp = 22u8;
@@ -139,6 +155,7 @@ fn parse(args: &[String]) -> Result<Args, ArgError> {
                     .map_err(|e| ArgError::Invalid(format!("--client-media-port: {e}")))?;
             }
             "--output" => config.output = Some(value("--output")?),
+            "--virtual-output" => virtual_output = true,
             "--size" => {
                 let size = value("--size")?;
                 let (w, h) = size
@@ -176,6 +193,14 @@ fn parse(args: &[String]) -> Result<Args, ArgError> {
             "--pairing-store" => {
                 pairing_store = std::path::PathBuf::from(value("--pairing-store")?);
             }
+            "--advertise" => {
+                advertise = Some(
+                    value("--advertise")?
+                        .parse()
+                        .map_err(|e| ArgError::Invalid(format!("--advertise: {e}")))?,
+                );
+            }
+            "--no-advertise" => advertise = None,
             "--pairing-code-file" => {
                 pairing_code_file = Some(std::path::PathBuf::from(value("--pairing-code-file")?));
             }
@@ -196,10 +221,22 @@ fn parse(args: &[String]) -> Result<Args, ArgError> {
                     .map_err(|e| ArgError::Invalid(format!("--duration: {e}")))?;
                 config.max_duration = Some(Duration::from_secs_f64(seconds));
             }
-            "--capture" => {
-                let choice =
-                    lumen_host_service::backend::BackendChoice::parse(&value("--capture")?)
+            "--encoder" => {
+                config.encoder =
+                    lumen_host_service::pipeline::EncoderBackend::parse(&value("--encoder")?)
                         .map_err(ArgError::Invalid)?;
+            }
+            "--capture" => {
+                let name = value("--capture")?;
+                if name == "portal" {
+                    // The portal is a Wayland session for injection; the token sits by the
+                    // pairing store, set once the arguments are read.
+                    config.capture = lumen_host_service::backend::DisplayServer::Wayland;
+                    portal = true;
+                    continue;
+                }
+                let choice = lumen_host_service::backend::BackendChoice::parse(&name)
+                    .map_err(ArgError::Invalid)?;
                 config.capture = match choice {
                     lumen_host_service::backend::BackendChoice::Auto => {
                         lumen_host_service::backend::detect_display_server()
@@ -246,6 +283,9 @@ fn parse(args: &[String]) -> Result<Args, ArgError> {
     config.width = width;
     config.height = height;
     config.pairing_code_file = pairing_code_file;
+    if portal {
+        config.portal_token = Some(pairing_store.with_file_name("portal-token"));
+    }
     config.rate_control = match bitrate {
         Some(bps) => RateControl::Cbr {
             bits_per_second: bps,
@@ -258,6 +298,8 @@ fn parse(args: &[String]) -> Result<Args, ArgError> {
         report,
         pairing_store,
         pairing_mode,
+        advertise,
+        virtual_output,
     })
 }
 
@@ -337,7 +379,27 @@ fn main() -> ExitCode {
         };
     }
 
-    let config = args.config;
+    let mut config = args.config;
+    // Held until the host exits: dropping it unplugs the output.
+    let _virtual_output = if args.virtual_output {
+        match lumen_host_service::virtual_display::SessionOutput::create(
+            config.width,
+            config.height,
+            config.fps,
+        ) {
+            Ok(output) => {
+                host_log!(info "lumen-host: added the virtual output {}", output.name());
+                config.output = Some(output.name().to_owned());
+                Some(output)
+            }
+            Err(e) => {
+                host_log!(warn "lumen-host: cannot add a virtual output: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
+    };
     host_log!(info
         "lumen-host: control {}, media client port {}, capture {}x{} at {} fps",
         config.control_addr, config.client_media_port, config.width, config.height, config.fps
@@ -350,6 +412,29 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // The host advertises itself, so a client finds it without an address. The advertisement
+    // carries the identity fingerprint, so a client can tell two hosts apart.
+    if let Some(address) = args.advertise {
+        let port = address.port();
+        let fingerprint = pairing.public_bytes();
+        match lumen_transport::mdns::Advertiser::advertise(
+            port,
+            &host_name(),
+            &fingerprint.iter().fold(String::new(), |mut text, byte| {
+                use std::fmt::Write;
+                let _ = write!(text, "{byte:02x}");
+                text
+            }),
+            address.ip(),
+        ) {
+            Ok(advertiser) => {
+                // The advertisement lives as long as the host does.
+                let _advertiser = advertiser;
+                host_log!(info "lumen-host: advertising on mDNS as {port}");
+            }
+            Err(e) => host_log!(warn "lumen-host: cannot advertise on mDNS: {e}"),
+        }
+    }
     let mut pipeline = match HostPipeline::new(config, pairing, args.pairing_mode) {
         Ok(p) => p,
         Err(e) => {
@@ -382,4 +467,13 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// The name the host advertises: the machine's name, or "lumen" when it has none.
+fn host_name() -> String {
+    std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .map(|name| name.trim().to_owned())
+        .ok()
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "lumen".to_owned())
 }

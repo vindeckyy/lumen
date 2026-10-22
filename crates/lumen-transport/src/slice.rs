@@ -216,14 +216,21 @@ impl SliceAssembler {
 
         let mut recovered: Vec<(u16, Vec<u8>)> = Vec::new();
         for (block_index, mut indices) in by_block {
-            if indices.len() > 3 {
+            let parity_count = crate::fec::parity_for_block(block_data);
+            if indices.len() > parity_count {
                 continue;
             }
             indices.sort_unstable();
-            let parity: Vec<Vec<u8>> = (0..3u16)
-                .filter_map(|p| parity_map.get(&(block_index, p)).cloned())
+            // Indexed by parity slot: an empty slot is a parity slice that did not arrive.
+            let parity: Vec<Vec<u8>> = (0..parity_count as u16)
+                .map(|p| {
+                    parity_map
+                        .get(&(block_index, p))
+                        .cloned()
+                        .unwrap_or_default()
+                })
                 .collect();
-            if parity.len() < indices.len() {
+            if parity.iter().filter(|p| !p.is_empty()).count() < indices.len() {
                 continue;
             }
             let start = block_index as usize * block_data;
@@ -255,8 +262,8 @@ impl SliceAssembler {
                 .collect();
             let fec = FecBlock { data, parity };
             let relative: Vec<usize> = indices.iter().map(|&i| i as usize - start).collect();
-            for &local in &relative {
-                if let Some(bytes) = fec.recover(local, &relative) {
+            if let Some(rebuilt) = fec.recover_missing(&relative) {
+                for (local, bytes) in rebuilt {
                     recovered.push(((start + local) as u16, bytes));
                 }
             }

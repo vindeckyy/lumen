@@ -11,11 +11,17 @@ description = "Host-side input injection."
 
 [dependencies]
 lumen-input-wayland = { workspace = true }
-lumen-ffi-libei = { workspace = true }
+reis = { workspace = true }
 ashpd = { workspace = true, features = ["remote_desktop", "screencast"] }
 tokio = { version = "1", features = ["rt"] }
 evdev = "0.13"
 x11rb = { workspace = true }
+wayland-client = { workspace = true }
+wayland-protocols-wlr = { workspace = true }
+wayland-protocols-misc = { workspace = true }
+# Local, not workspace: the workspace entry also enables `x11`, which links libxkbcommon-x11.so.
+xkbcommon = { version = "0.9", default-features = false, features = ["wayland"] }
+rustix = { workspace = true }
 lumen-protocol = { workspace = true }
 lumen-crypto = { workspace = true }
 
